@@ -13,7 +13,7 @@ const state = {
   jobId: null,
   result: null,
   chartHits: [],   // click targets on the shot chart
-  mark: { corners: [], img: null, info: null, frame: 0 },
+  mark: { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null },
 };
 
 /* ---------------------------------------------------------------- upload */
@@ -77,7 +77,7 @@ $("upload-form").addEventListener("submit", async (e) => {
 $("again").addEventListener("click", () => {
   $("results").classList.add("hidden");
   $("mark-panel").classList.add("hidden");
-  state.mark = { corners: [], img: null, info: null, frame: 0 };
+  state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null };
   $("upload-panel").classList.remove("hidden");
   $("submit-btn").disabled = false;
   $("progress").classList.add("hidden");
@@ -258,8 +258,8 @@ function drawMark() {
   if (state.mark.img) ctx.drawImage(state.mark.img, 0, 0);
 
   const pts = state.mark.corners;
-  const r = Math.max(6, canvas.width * 0.008);
-  ctx.lineWidth = Math.max(2, canvas.width * 0.004);
+  const r = Math.max(6, canvas.width * 0.012);
+  ctx.lineWidth = Math.max(2, canvas.width * 0.005);
 
   if (pts.length > 1) {
     ctx.strokeStyle = "#38bdf8";
@@ -272,26 +272,163 @@ function drawMark() {
   pts.forEach(([x, y], i) => {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = "#38bdf8";
+    ctx.fillStyle = state.mark.dragging === i ? "#fbbf24" : "#38bdf8";
     ctx.fill();
     ctx.strokeStyle = "#0b1220";
     ctx.stroke();
+    // A cross through the middle: the dot alone hides the pixel it marks.
+    ctx.beginPath();
+    ctx.moveTo(x - r * 1.8, y); ctx.lineTo(x + r * 1.8, y);
+    ctx.moveTo(x, y - r * 1.8); ctx.lineTo(x, y + r * 1.8);
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.lineWidth = Math.max(2, canvas.width * 0.005);
     ctx.fillStyle = "#e8eefc";
-    ctx.font = `600 ${Math.max(13, canvas.width * 0.018)}px system-ui, sans-serif`;
-    ctx.fillText(labels[i], x + r + 4, y - r);
+    ctx.font = `600 ${Math.max(13, canvas.width * 0.032)}px system-ui, sans-serif`;
+    ctx.fillText(labels[i], x + r + 5, y - r);
   });
+
+  drawLoupe(ctx, canvas);
+  updateMarkStatus();
 }
 
-$("mark-canvas").addEventListener("click", (e) => {
-  if (state.mark.corners.length >= 4) return;
+/* A magnifier under the cursor. Goal pipe is a few pixels wide in phone
+   footage, and the scale of every measurement comes from landing on it, so
+   placing corners by eye at display size is not good enough. */
+const LOUPE_ZOOM = 6;
+
+function drawLoupe(ctx, canvas) {
+  const at = state.mark.hover;
+  if (!at || !state.mark.img) return;
+
+  const size = Math.round(Math.min(canvas.width, canvas.height) * 0.42);
+  const src = size / LOUPE_ZOOM;
+  // Keep the loupe away from the point being placed, and inside the frame.
+  const pad = Math.round(canvas.width * 0.03);
+  const left = at.x < canvas.width / 2 ? canvas.width - size - pad : pad;
+  const top = at.y < canvas.height / 2 ? canvas.height - size - pad : pad;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, size, size);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    state.mark.img,
+    at.x - src / 2, at.y - src / 2, src, src,
+    left, top, size, size,
+  );
+  ctx.restore();
+
+  // Crosshair on the exact pixel under the cursor.
+  const cx = left + size / 2;
+  const cy = top + size / 2;
+  ctx.strokeStyle = "rgba(56,189,248,0.95)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - size * 0.16, cy); ctx.lineTo(cx - 3, cy);
+  ctx.moveTo(cx + 3, cy); ctx.lineTo(cx + size * 0.16, cy);
+  ctx.moveTo(cx, cy - size * 0.16); ctx.lineTo(cx, cy - 3);
+  ctx.moveTo(cx, cy + 3); ctx.lineTo(cx, cy + size * 0.16);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(left, top, size, size);
+}
+
+/* Tell the player whether the shape they have drawn could be the goal they
+   said it is. A rectangle seen at an angle looks narrower than head-on, never
+   wider, so an aspect well above the head-on figure means a mis-placed corner. */
+function updateMarkStatus() {
+  const el = $("mark-status");
+  if (!el) return;
+  const pts = state.mark.corners;
+  if (pts.length < 4) {
+    el.textContent = `${pts.length} of 4 corners placed`;
+    el.className = "mark-status";
+    return;
+  }
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const w = (dist(pts[0], pts[1]) + dist(pts[3], pts[2])) / 2;
+  const h = (dist(pts[0], pts[3]) + dist(pts[1], pts[2])) / 2;
+  const aspect = h > 0 ? w / h : 0;
+
+  const gw = Number($("goal-w")?.value) || 72;
+  const gh = Number($("goal-h")?.value) || 48;
+  const post = 2.375;
+  const headOn = (gw + 2 * post) / (gh + post);
+
+  if (aspect > headOn * 1.15) {
+    el.textContent = `That shape is wider than a ${gw}x${gh}" goal can look (${aspect.toFixed(2)} vs ${headOn.toFixed(2)} head-on). Check the top and bottom corners.`;
+    el.className = "mark-status bad";
+  } else if (aspect < headOn * 0.45) {
+    el.textContent = `Very side-on (${aspect.toFixed(2)} vs ${headOn.toFixed(2)} head-on). Fine if the camera was well off to the side, otherwise check the corners.`;
+    el.className = "mark-status warn-text";
+  } else {
+    el.textContent = `Shape is consistent with a ${gw}x${gh}" goal (${aspect.toFixed(2)} vs ${headOn.toFixed(2)} head-on). Drag any corner to fine-tune.`;
+    el.className = "mark-status good";
+  }
+}
+
+function canvasPoint(e) {
   const canvas = $("mark-canvas");
   const rect = canvas.getBoundingClientRect();
-  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-  state.mark.corners.push([x, y]);
+  const src = e.touches ? e.touches[0] : e;
+  return {
+    x: (src.clientX - rect.left) * (canvas.width / rect.width),
+    y: (src.clientY - rect.top) * (canvas.height / rect.height),
+  };
+}
+
+function nearestCorner(pt) {
+  const canvas = $("mark-canvas");
+  const grab = canvas.width * 0.05;
+  let best = null;
+  let bestD = grab;
+  state.mark.corners.forEach(([x, y], i) => {
+    const d = Math.hypot(x - pt.x, y - pt.y);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  return best;
+}
+
+function onMarkDown(e) {
+  e.preventDefault();
+  const pt = canvasPoint(e);
+  state.mark.hover = pt;
+  const hit = nearestCorner(pt);
+  if (hit !== null) {
+    state.mark.dragging = hit;
+  } else if (state.mark.corners.length < 4) {
+    state.mark.corners.push([pt.x, pt.y]);
+  }
   $("mark-go").disabled = state.mark.corners.length !== 4;
   drawMark();
-});
+}
+
+function onMarkMove(e) {
+  if (e.touches) e.preventDefault();
+  const pt = canvasPoint(e);
+  state.mark.hover = pt;
+  if (state.mark.dragging !== null) state.mark.corners[state.mark.dragging] = [pt.x, pt.y];
+  drawMark();
+}
+
+function onMarkUp() {
+  state.mark.dragging = null;
+  drawMark();
+}
+
+const markCanvas = $("mark-canvas");
+markCanvas.addEventListener("mousedown", onMarkDown);
+markCanvas.addEventListener("mousemove", onMarkMove);
+window.addEventListener("mouseup", onMarkUp);
+markCanvas.addEventListener("mouseleave", () => { state.mark.hover = null; drawMark(); });
+markCanvas.addEventListener("touchstart", onMarkDown, { passive: false });
+markCanvas.addEventListener("touchmove", onMarkMove, { passive: false });
+markCanvas.addEventListener("touchend", onMarkUp);
 
 $("mark-undo").addEventListener("click", () => {
   state.mark.corners.pop();

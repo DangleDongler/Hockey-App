@@ -117,6 +117,15 @@ td .pill { font-size: .72rem; padding: .15rem .5rem; border-radius: 99px; font-w
 .mark-steps { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; padding-left: 1.3rem; }
 .mark-steps li { margin-bottom: .25rem; }
 .mark-steps strong { color: var(--ink); }
+.mark-hint { color: var(--muted); font-size: .85rem; margin: 0 0 1rem; }
+.mark-status {
+  font-size: .88rem; margin: .8rem 0 0; padding: .6rem .8rem;
+  border-radius: 8px; background: var(--card-2); color: var(--muted);
+}
+.mark-status.good { color: var(--on-net); background: rgba(34,197,94,.10); }
+.mark-status.bad { color: var(--miss); background: rgba(239,68,68,.10); }
+.mark-status.warn-text { color: var(--post); background: rgba(245,158,11,.10); }
+
 .mark-wrap {
   line-height: 0; border-radius: 10px; overflow: hidden; background: #000;
   display: flex; justify-content: center;
