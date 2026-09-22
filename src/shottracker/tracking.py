@@ -144,12 +144,17 @@ def build_tracks(
     cands_by_frame: dict[int, list[Candidate]],
     goal_width_px: float,
     cfg: Config,
+    notes: list[str] | None = None,
 ) -> list[Track]:
     """Grow trajectories out of scored per-frame candidates.
 
     Seeds are tried best-first and claim the detections they consume, so the
-    strongest evidence wins and the search stays linear in practice.
+    strongest evidence wins and the search stays linear in practice -- as long
+    as the number of candidates per frame stays small.  When the foreground
+    model fails, every frame fills with candidates and the seed set grows with
+    their square, so it is capped.
     """
+    notes = notes if notes is not None else []
     tcfg = cfg.track
     gw = max(goal_width_px, 1.0)
     max_gap = tcfg.max_frame_gap
@@ -176,6 +181,13 @@ def build_tracks(
                         continue
                     seeds.append((-(c1.score + c2.score) / 2.0, f, i, f2, j))
     seeds.sort()
+    if len(seeds) > tcfg.max_seeds:
+        notes.append(
+            f"{len(seeds):,} possible puck pairings were found, far more than a clean clip "
+            f"produces; only the {tcfg.max_seeds:,} strongest were followed. This nearly always "
+            "means the camera moved, so everything in frame looks like it is in motion."
+        )
+        seeds = seeds[: tcfg.max_seeds]
 
     def find_next(track: Track, direction: int) -> tuple[int, int] | None:
         """Best unclaimed candidate continuing the track forward/backward."""

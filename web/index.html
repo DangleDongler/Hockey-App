@@ -58,6 +58,30 @@
     <p id="error" class="error hidden"></p>
   </section>
 
+  <section id="mark-panel" class="card hidden">
+    <h2>Mark the net</h2>
+    <p class="mark-intro" id="mark-intro"></p>
+    <ol class="mark-steps">
+      <li>Click the <strong>top-left</strong> outside corner of the goal frame</li>
+      <li>Then the <strong>top-right</strong></li>
+      <li>Then the <strong>bottom-right</strong>, where the post meets the ground</li>
+      <li>Then the <strong>bottom-left</strong></li>
+    </ol>
+    <div class="mark-wrap">
+      <canvas id="mark-canvas"></canvas>
+    </div>
+    <div class="mark-controls">
+      <label class="scrub">
+        <span>Frame</span>
+        <input type="range" id="mark-frame" min="0" max="100" value="0">
+      </label>
+      <div class="mark-buttons">
+        <button type="button" id="mark-undo" class="secondary">Undo</button>
+        <button type="button" id="mark-go" disabled>Analyze with this net</button>
+      </div>
+    </div>
+  </section>
+
   <section id="results" class="hidden">
     <div class="stats card" id="stats"></div>
 

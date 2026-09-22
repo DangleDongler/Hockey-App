@@ -58,22 +58,48 @@ any shot by clicking its mark on the chart.
 
 ## Filming so the numbers are good
 
-Three things matter, in order:
+These are ordered by how much they actually decide whether a clip can be read
+at all. The first one is not a nicety — at 30 fps most shots are simply not in
+the footage.
 
-1. **Tell it how far out you were shooting** (`--distance`, in feet). Speed is
-   directly proportional to it, and it is the single input that most improves
-   the result. Pacing it out is fine.
-2. **Put the camera off to one side**, not directly behind you. A camera
-   looking straight down the shot line cannot see the goal's perspective, and
-   without that the tracker has to guess your lens. Off to the side by 10 feet
-   or more is plenty.
-3. **Keep the camera still** and the whole net in frame. A tripod, a bag, a
-   boot — anything that stops it drifting. The background model assumes the
-   camera does not move.
+1. **Record in slow motion — 120 or 240 fps.** A puck only exists on camera for
+   `distance / speed` seconds. A 45 mph shot from 10 ft is in the air for about
+   a seventh of a second, which at 30 fps is *four frames*, of which the puck is
+   cleanly visible in one or two. The tracker needs at least four sightings and
+   wants eight. Every recent phone shoots 240 fps slow-motion; switching to it
+   turns four frames into thirty.
 
-High frame rates help: 120 fps gives roughly four times as many looks at the
-puck as 30 fps. If you shoot slow-motion, check that the file reports the real
-rate — many phones do not — and pass `--fps` if it does not.
+   | distance | 30 fps | 60 fps | 120 fps | 240 fps |
+   | --- | --- | --- | --- | --- |
+   | 10 ft | 4.5 | 9.1 | 18.2 | 36.4 |
+   | 20 ft | 9.1 | 18.2 | 36.4 | 72.7 |
+
+   *(frames of flight for a 45 mph shot)*
+
+2. **Shoot in even light.** Flat overcast, open shade, or indoors is ideal.
+   Direct sun filtered through trees is the worst case there is: the dappled
+   pattern crawls across the grass frame to frame, so the detector sees
+   hundreds of moving dark shapes and the puck is one of them. On real backyard
+   footage in dappled sun this produced ~320 false candidates per frame against
+   a puck about 17 pixels in area.
+
+3. **Prop the phone against something.** A fence post, a bag, a chair. The
+   background model assumes the camera holds still.
+
+4. **Tell it how far out you were shooting** (`--distance`, in feet). Speed is
+   directly proportional to it. Pacing it out is fine.
+
+5. **Put the camera off to one side**, not directly behind you. Square-on to the
+   net, the goal's outline reveals nothing about your lens and the tracker has
+   to assume one. Ten feet to the side is plenty.
+
+6. **Frame it tight** — the net and the shooting lane, nothing else. At 540 px
+   wide a puck is about three pixels across; filling the frame with the part
+   that matters is free resolution.
+
+If you shoot slow-motion, check that the file reports the real rate — many
+phones write 30 fps into a 240 fps file — and pass `--fps` if it does not.
+Every speed scales directly with it.
 
 ## How accurate is it
 
@@ -109,6 +135,7 @@ Five stages, in `src/shottracker/`:
 | --- | --- | --- |
 | Find the goal | `net_detect.py` | Segments the red pipe in HSV, fits the outer edge of each post and the top of the crossbar with RANSAC, and intersects them for the corners. Repeated over frames sampled across the clip; the median of the frames that agree wins. |
 | Calibrate | `camera.py` | Four corners of a rectangle of known size determine the camera. Solves focal length from the orthonormality of the rotation's columns, then pose. |
+| Steady the view | `stabilize.py` | Optional per-frame translation for hand-held clips. Off by default. |
 | Find the puck | `puck_detect.py` | A per-pixel median over the clip is a clean, puck-free plate of the rink. Anything differing from it is a scored candidate. |
 | Follow it | `tracking.py` | Grows trajectories best-first with velocity gating, then keeps only those that travel fast, in one direction, along a straight line in the image. |
 | Score the shot | `shots.py`, `speed.py` | Maps the impact through the goal-plane homography into inches on the net, and estimates speed. |
@@ -153,32 +180,65 @@ src/shottracker/    the tracker: config, geometry, camera, detection, tracking, 
   benchmark.py      grades the tracker against them
 server/app.py       upload a clip, poll a job, fetch the result
 web/                the browser app: canvas overlay on the original video, interactive shot chart
-tests/              69 tests, including end-to-end accuracy against ground truth
+  stabilize.py      optional motion compensation (off by default, see below)
+tests/              71 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
 is rendering video).
 
-## Where it needs real video
+## What real footage showed
 
-This was built and graded against synthetic footage, which is honest about
-geometry but generous about everything else. The parts most likely to need work
-on real clips:
+The accuracy table above is against rendered clips. The first real clip — a kid
+shooting into a backyard net, 540x960 at 30 fps, handheld, in direct afternoon
+sun through trees — could not be read at all. That is worth writing down
+honestly, because the reasons are specific and mostly fixable at the camera:
 
-- **Arena lighting and goal colour.** The pipe segmentation assumes saturated
-  red. Faded practice nets, orange pipe and dim rinks will need the HSV bands
-  in `NetDetectConfig` widened, or a learned detector.
-- **The shooter in the frame.** A player's body, stick and skates are the main
-  source of candidate blobs. Trajectory filtering handles them here, but a
-  stick blade travelling with the puck at release is the case to watch.
-- **Rebounds and multiple pucks.** Currently a second trajectory overlapping
-  the first is merged as a rebound. Two pucks genuinely in the air would need
-  proper multi-target tracking.
-- **Handheld footage.** The median background plate assumes a still camera.
-  A stabilization pass, or the MOG2 path already in `PuckDetectConfig`, would
-  be the starting point.
-- **Shooter tutors.** A tarp over the net hides the pipe entirely; detection
-  would have to switch to the tutor's own markings.
+| Problem | Measured | Fixable by |
+| --- | --- | --- |
+| Frame rate too low | ~5 frames of flight; puck visible in 1–2 | Slow-motion capture |
+| Dappled sun through leaves | ~320 false candidates per frame | Even light |
+| Hand-held camera | up to 80 px of drift | Propping the phone |
+| Maroon goal pipe | posts at H≈159–175, **overlapping bare skin at H=177** | Marking the net by hand |
+
+The last one is the interesting failure. Colour thresholding works on a
+saturated red rink goal and cannot work here: this net's pipe sits in the same
+HSV neighbourhood as the shooter's legs, and its crossbar was washed out to
+S=26 by glare. No threshold separates those. Hence hand-marking, which is now a
+first-class path in both the CLI (`--net`) and the web app.
+
+What that clip changed in the code:
+
+- **The detector refuses rather than guesses.** It had confidently reported a
+  flowering shrub as the goal at 19% confidence. Below `min_confidence` it now
+  returns nothing and says why, because a wrong outline poisons every number
+  downstream.
+- **It cannot hang any more.** Seed pairs grow with the square of the
+  candidates per frame, so a failing foreground model took the search from
+  seconds to over fifteen minutes. Seeds are capped and the saturation is
+  reported.
+- **It checks the capture before doing any work** and says plainly when the
+  frame rate cannot resolve a shot at the stated distance.
+- **Hand-marking the net in the browser**, on a server-decoded frame, so it
+  works even for codecs the browser cannot play (that clip was HEVC).
+
+A stabilization pass is included (`stabilize.py`) but **off by default**: on
+that footage it made things 71% worse, because the noise was moving light
+rather than a moving camera, and resampling blur pushed more pixels over the
+difference threshold. It stays available, unproven, until there is footage that
+shows it helping.
+
+Still untested on real video, and next in line:
+
+- **The shooter in frame.** A stick blade travelling with the puck at release
+  is the case to watch.
+- **Rebounds and multiple pucks.** A second trajectory overlapping the first is
+  merged as a rebound; two pucks genuinely in the air need real multi-target
+  tracking.
+- **Shooter tutors.** A tarp over the net hides the pipe entirely.
+- **Non-regulation nets.** Backyard goals are often not 72x48. `GoalSpec` takes
+  the real dimensions, and getting them right matters — every impact position
+  scales with them.
 
 ## Next
 

@@ -192,7 +192,9 @@ def test_a_clip_with_no_net_reports_why(workdir, tmp_path):
     result = analyze(path, Config())
     assert result.net is None
     assert result.shots == []
-    assert any("no hockey net was found" in w for w in result.warnings)
+    # The refusal has to say what to do about it, not just that it failed.
+    assert any("looked like a goal frame" in w for w in result.warnings)
+    assert any("by hand" in w for w in result.warnings)
 
 
 def test_a_smaller_training_net_is_measured_on_its_own_terms():
@@ -209,3 +211,25 @@ def test_a_smaller_training_net_is_measured_on_its_own_terms():
     assert five_hole.x0 == pytest.approx(-8.0)
     assert five_hole.x1 == pytest.approx(8.0)
     assert summarize(result)["zone_counts"].keys() == {z.key for z in zones}
+
+
+def test_a_low_confidence_outline_is_refused_rather_than_reported():
+    """A red shrub must not be reported as a net: every later number depends on it."""
+    import cv2
+
+    from shottracker.net_detect import detect_net
+
+    cfg = Config()
+    rng = np.random.default_rng(3)
+    frames = []
+    for i in range(8):
+        f = np.full((720, 1280, 3), 200, dtype=np.uint8)
+        # Scattered red blobs that drift between frames, like foliage.
+        for _ in range(40):
+            x, y = rng.integers(500, 800), rng.integers(200, 450)
+            cv2.circle(f, (int(x) + i * 4, int(y)), int(rng.integers(3, 9)), (40, 40, 210), -1)
+        frames.append(f)
+
+    notes = []
+    assert detect_net(frames, cfg, notes) is None
+    assert notes, "a refusal must explain itself"

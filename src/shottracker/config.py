@@ -78,6 +78,10 @@ class NetDetectConfig:
     # quad's diagonal, otherwise they are dropped as outliers.
     consensus_tol_frac: float = 0.06
     min_agreeing_frames: int = 3
+    # Below this, say nothing rather than something wrong.  A confidently
+    # reported outline that is really a flowering shrub poisons every number
+    # downstream, so a refusal is the more useful answer.
+    min_confidence: float = 0.35
 
 
 @dataclass
@@ -95,6 +99,16 @@ class PuckDetectConfig:
     mog_history: int = 250
     mog_var_threshold: float = 28.0
 
+    # Aligning hand-held frames before differencing sounds like it should help,
+    # and on the one piece of real footage measured so far it did not: it raised
+    # false candidates by 71% (319 -> 547 per frame). The noise there came from
+    # dappled sunlight moving through leaves, which no amount of translation
+    # fixes, while the resampling blur pushed more pixels over the threshold.
+    # Off until footage exists where it demonstrably helps.
+    stabilize: bool = False
+    stabilize_sample_stride: int = 20
+    stabilize_drift_threshold_px: float = 3.0
+
     # Size bounds as multiples of the puck's apparent area on the goal plane,
     # so they hold at any camera distance.  Motion blur smears a puck over many
     # times its own area, and it looks larger while it is nearer the camera.
@@ -107,6 +121,9 @@ class PuckDetectConfig:
     dark_weight: float = 0.45        # how much darkness contributes to the score
 
     max_candidates_per_frame: int = 14
+    # A frame pinned at the cap means the foreground model is failing (usually
+    # a camera that moved).  Past this fraction of frames, say so.
+    saturated_frame_warn_frac: float = 0.5
 
 
 @dataclass
@@ -126,6 +143,9 @@ class TrackingConfig:
     max_line_residual_frac: float = 0.04   # of the goal width
 
     ransac_iterations: int = 60
+    # Seed pairs grow with the square of the candidates per frame, so a bad
+    # foreground model can make the search explode.  This is the safety valve.
+    max_seeds: int = 150_000
 
 
 @dataclass
@@ -175,6 +195,10 @@ class SpeedConfig:
     # are the resulting speed errors, as fractions, folded into the error bar.
     pose_uncertainty_frac: float = 0.03
     assumed_lens_uncertainty_frac: float = 0.09
+
+    # Used only to warn, before any analysis, whether the capture rate can
+    # resolve a shot at all: flight time = distance / speed.
+    nominal_speed_mph: float = 45.0
 
     # Sanity band.  Outside it we keep the number but flag it.
     plausible_min_mph: float = 10.0

@@ -13,6 +13,7 @@ const state = {
   jobId: null,
   result: null,
   chartHits: [],   // click targets on the shot chart
+  mark: { corners: [], img: null, info: null, frame: 0 },
 };
 
 /* ---------------------------------------------------------------- upload */
@@ -73,6 +74,8 @@ $("upload-form").addEventListener("submit", async (e) => {
 
 $("again").addEventListener("click", () => {
   $("results").classList.add("hidden");
+  $("mark-panel").classList.add("hidden");
+  state.mark = { corners: [], img: null, info: null, frame: 0 };
   $("upload-panel").classList.remove("hidden");
   $("submit-btn").disabled = false;
   $("progress").classList.add("hidden");
@@ -82,7 +85,12 @@ async function poll() {
   try {
     const job = await (await fetch(`/api/jobs/${state.jobId}`)).json();
     setProgress(job.stage, job.progress);
-    if (job.status === "done") return render(job.result);
+    if (job.status === "done") {
+      // No outline means every downstream number is unavailable, so offer the
+      // one thing that always works: let the player point at the net.
+      if (!job.result.net) return offerManualMarking(job.result);
+      return render(job.result);
+    }
     if (job.status === "error") throw new Error(job.error);
     setTimeout(poll, POLL_MS);
   } catch (err) {
@@ -193,6 +201,122 @@ function seekToFrame(frame) {
   video.currentTime = Math.max(0, frame / fps - 0.15);
   video.pause();
   drawOverlay();
+}
+
+/* ------------------------------------------------------- marking the net */
+
+async function offerManualMarking(result) {
+  $("progress").classList.add("hidden");
+  $("upload-panel").classList.add("hidden");
+  $("mark-panel").classList.remove("hidden");
+
+  const why = (result.warnings || []).find((w) => w.includes("goal")) ||
+    "The goal could not be found automatically.";
+  $("mark-intro").textContent = why + " Mark it once here and the clip will be re-read.";
+
+  state.mark.info = await (await fetch(`/api/jobs/${state.jobId}/info`)).json();
+  const slider = $("mark-frame");
+  slider.max = Math.max(0, (state.mark.info.frame_count || 1) - 1);
+  slider.value = Math.floor((state.mark.info.frame_count || 1) / 2);
+  state.mark.frame = Number(slider.value);
+  await loadMarkFrame();
+}
+
+function loadMarkFrame() {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      state.mark.img = img;
+      const canvas = $("mark-canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      drawMark();
+      resolve();
+    };
+    img.src = `/api/jobs/${state.jobId}/frame.png?frame=${state.mark.frame}`;
+  });
+}
+
+$("mark-frame").addEventListener("change", async (e) => {
+  state.mark.frame = Number(e.target.value);
+  await loadMarkFrame();
+});
+
+function drawMark() {
+  const canvas = $("mark-canvas");
+  const ctx = canvas.getContext("2d");
+  if (state.mark.img) ctx.drawImage(state.mark.img, 0, 0);
+
+  const pts = state.mark.corners;
+  const r = Math.max(6, canvas.width * 0.008);
+  ctx.lineWidth = Math.max(2, canvas.width * 0.004);
+
+  if (pts.length > 1) {
+    ctx.strokeStyle = "#38bdf8";
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    if (pts.length === 4) ctx.closePath();
+    ctx.stroke();
+  }
+  const labels = ["TL", "TR", "BR", "BL"];
+  pts.forEach(([x, y], i) => {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#38bdf8";
+    ctx.fill();
+    ctx.strokeStyle = "#0b1220";
+    ctx.stroke();
+    ctx.fillStyle = "#e8eefc";
+    ctx.font = `600 ${Math.max(13, canvas.width * 0.018)}px system-ui, sans-serif`;
+    ctx.fillText(labels[i], x + r + 4, y - r);
+  });
+}
+
+$("mark-canvas").addEventListener("click", (e) => {
+  if (state.mark.corners.length >= 4) return;
+  const canvas = $("mark-canvas");
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  state.mark.corners.push([x, y]);
+  $("mark-go").disabled = state.mark.corners.length !== 4;
+  drawMark();
+});
+
+$("mark-undo").addEventListener("click", () => {
+  state.mark.corners.pop();
+  $("mark-go").disabled = state.mark.corners.length !== 4;
+  drawMark();
+});
+
+$("mark-go").addEventListener("click", async () => {
+  const body = new FormData();
+  body.append("net_quad", state.mark.corners.flat().map((v) => v.toFixed(1)).join(","));
+  $("mark-go").disabled = true;
+  try {
+    const res = await fetch(`/api/jobs/${state.jobId}/reanalyze`, { method: "POST", body });
+    if (!res.ok) throw new Error((await res.json()).detail ?? "could not re-analyze");
+    $("mark-panel").classList.add("hidden");
+    $("upload-panel").classList.remove("hidden");
+    $("progress").classList.remove("hidden");
+    setProgress("re-reading with your net", 0.05);
+    pollAfterMark();
+  } catch (err) {
+    showError(err.message);
+    $("mark-go").disabled = false;
+  }
+});
+
+async function pollAfterMark() {
+  try {
+    const job = await (await fetch(`/api/jobs/${state.jobId}`)).json();
+    setProgress(job.stage, job.progress);
+    if (job.status === "done") return render(job.result);
+    if (job.status === "error") throw new Error(job.error);
+    setTimeout(pollAfterMark, POLL_MS);
+  } catch (err) {
+    showError(err.message);
+  }
 }
 
 /* ------------------------------------------------------------ shot chart */

@@ -315,8 +315,16 @@ def consensus_quad(
     return refined, keep.tolist()
 
 
-def detect_net(frames: list[np.ndarray], cfg: Config) -> NetDetection | None:
-    """Vote on one static goal outline using frames sampled across the clip."""
+def detect_net(
+    frames: list[np.ndarray], cfg: Config, notes: list[str] | None = None
+) -> NetDetection | None:
+    """Vote on one static goal outline using frames sampled across the clip.
+
+    Returns None when the evidence is too weak to name an outline.  Anything
+    appended to ``notes`` explains why, because "I could not find it" is only
+    useful to a player if it also says what to change.
+    """
+    notes = notes if notes is not None else []
     rng = np.random.default_rng(7)
     quads: list[np.ndarray] = []
     confs: list[float] = []
@@ -331,21 +339,29 @@ def detect_net(frames: list[np.ndarray], cfg: Config) -> NetDetection | None:
         confs.append(c)
         methods.append(m)
 
-    notes: list[str] = []
     if not quads:
+        notes.append(
+            "nothing in the clip looked like a goal frame. The detector keys on the red pipe, so a "
+            "goal in deep shade, a faded or non-red frame, or one hidden behind a shooter tutor will "
+            "not be found. Mark the corners by hand instead."
+        )
         return None
 
     agreed = consensus_quad(quads, cfg.net.consensus_tol_frac)
     if agreed is None:
+        notes.append("the candidate outlines did not agree well enough to combine")
         return None
     quad, keep = agreed
 
     n_used = len(keep)
     if n_used < cfg.net.min_agreeing_frames:
         notes.append(
-            f"only {n_used} of {len(frames)} sampled frames agreed on the goal outline; "
-            "the camera may be moving or the goal partly hidden"
+            f"only {n_used} of {len(frames)} sampled frames agreed on where the goal is, so no "
+            "outline could be trusted. Usually this means the camera moved during the clip, or the "
+            "goal's frame is too dark or washed out to pick out from the background. "
+            "Marking the four corners by hand solves it for good on a net that does not move."
         )
+        return None
 
     method_counts: dict[str, int] = {}
     for i in keep or range(len(methods)):
@@ -365,11 +381,20 @@ def detect_net(frames: list[np.ndarray], cfg: Config) -> NetDetection | None:
             "prefer time-of-flight with a known shot distance"
         )
 
+    if confidence < cfg.net.min_confidence:
+        notes.append(
+            f"a possible goal outline was found but only at {confidence:.0%} confidence, which is too "
+            "low to build measurements on -- a red jacket, a flowering shrub or a rink marking can all "
+            "look like goal pipe. Nothing was reported rather than something wrong. "
+            "Marking the corners by hand is the reliable fix."
+        )
+        return None
+
     return NetDetection(
         quad=order_quad(quad),
         confidence=confidence,
         method=method,
         frames_used=n_used,
         frames_tried=len(frames),
-        notes=notes,
+        notes=[n for n in notes],
     )

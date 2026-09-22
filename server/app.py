@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +39,8 @@ ALLOWED_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 class Job:
     id: str
     video_path: str
+    cfg: Config | None = None       # kept so the clip can be re-run with a marked net
+    net_quad: list[list[float]] | None = None
     status: str = "queued"        # queued | running | done | error
     stage: str = "queued"
     progress: float = 0.0
@@ -54,6 +58,7 @@ class Job:
             "error": self.error,
             "created_at": self.created_at,
             "result": self.result,
+            "net_quad": self.net_quad,
         }
 
 
@@ -68,13 +73,15 @@ def _run_job(job_id: str, cfg: Config) -> None:
         job = JOBS.get(job_id)
     if job is None:
         return
-    job.status, job.stage = "running", "starting"
+    job.cfg = cfg
+    job.status, job.stage, job.error = "running", "starting", None
 
     def progress(stage: str, frac: float) -> None:
         job.stage, job.progress = stage, float(frac)
 
+    quad = np.asarray(job.net_quad, dtype=float) if job.net_quad else None
     try:
-        result = analyze(job.video_path, cfg, progress=progress)
+        result = analyze(job.video_path, cfg, net_quad=quad, progress=progress)
         job.result = result.to_dict()
         job.chart_svg = shot_chart_svg(result)
         job.status, job.stage, job.progress = "done", "done", 1.0
@@ -148,6 +155,70 @@ def get_chart(job_id: str):
     if not job.chart_svg:
         raise HTTPException(409, "the analysis has not finished yet")
     return Response(job.chart_svg, media_type="image/svg+xml")
+
+
+@app.get("/api/jobs/{job_id}/frame.png")
+def get_frame(job_id: str, frame: int = 0):
+    """A single decoded frame, so the browser can show it even for codecs it
+    cannot play. Marking the net by hand depends on this."""
+    job = _job_or_404(job_id)
+    cap = cv2.VideoCapture(job.video_path)
+    if not cap.isOpened():
+        raise HTTPException(404, "the clip could not be opened")
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        idx = max(0, min(frame, max(total - 1, 0)))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, img = cap.read()
+        if not ok:
+            raise HTTPException(404, "that frame could not be read")
+        ok, buf = cv2.imencode(".png", img)
+        if not ok:
+            raise HTTPException(500, "the frame could not be encoded")
+    finally:
+        cap.release()
+    return Response(buf.tobytes(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/jobs/{job_id}/info")
+def get_info(job_id: str):
+    """Dimensions and length, needed to scale hand-placed corners correctly."""
+    job = _job_or_404(job_id)
+    cap = cv2.VideoCapture(job.video_path)
+    try:
+        info = {
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+            "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+        }
+    finally:
+        cap.release()
+    return info
+
+
+@app.post("/api/jobs/{job_id}/reanalyze")
+def reanalyze(job_id: str, background: BackgroundTasks, net_quad: str = Form(...)):
+    """Re-run the clip with the goal outline the player marked.
+
+    Four corners of the outer pipe, in source-video pixels, as
+    x1,y1,x2,y2,x3,y3,x4,y4 -- top-left, top-right, bottom-right, bottom-left.
+    """
+    job = _job_or_404(job_id)
+    if job.status == "running":
+        raise HTTPException(409, "this clip is still being analyzed")
+    try:
+        vals = [float(v) for v in net_quad.replace(";", ",").split(",") if v.strip()]
+    except ValueError:
+        raise HTTPException(400, "the corners must be numbers")
+    if len(vals) != 8:
+        raise HTTPException(400, "four corners are needed: x1,y1,x2,y2,x3,y3,x4,y4")
+
+    job.net_quad = [[vals[i], vals[i + 1]] for i in range(0, 8, 2)]
+    job.status, job.stage, job.progress, job.result = "queued", "queued", 0.0, None
+    background.add_task(asyncio.to_thread, _run_job, job_id, job.cfg or Config())
+    return JSONResponse({"id": job.id}, status_code=202)
 
 
 @app.get("/api/jobs/{job_id}/video")

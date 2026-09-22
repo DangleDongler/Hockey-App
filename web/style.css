@@ -107,4 +107,20 @@ td .pill { font-size: .72rem; padding: .15rem .5rem; border-radius: 99px; font-w
 
 .notes ul { margin: 0; padding-left: 1.2rem; color: var(--muted); }
 .notes li { margin-bottom: .45rem; }
+.mark-intro { color: var(--muted); margin: 0 0 .9rem; }
+.mark-steps { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; padding-left: 1.3rem; }
+.mark-steps li { margin-bottom: .25rem; }
+.mark-steps strong { color: var(--ink); }
+.mark-wrap {
+  line-height: 0; border-radius: 10px; overflow: hidden; background: #000;
+  display: flex; justify-content: center;
+}
+/* Portrait phone clips are very tall; keep the whole net on screen so the
+   corners can be placed without scrolling. */
+#mark-canvas { max-height: 68vh; max-width: 100%; width: auto; height: auto; display: block; cursor: crosshair; }
+.mark-controls { display: grid; gap: .9rem; margin-top: 1rem; }
+.scrub { display: flex; align-items: center; gap: .8rem; color: var(--muted); font-size: .85rem; }
+.scrub input { flex: 1; }
+.mark-buttons { display: grid; gap: .7rem; grid-template-columns: 1fr 2fr; }
+
 .hidden { display: none !important; }
