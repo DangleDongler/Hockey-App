@@ -94,8 +94,16 @@ class PuckDetector:
             if area < self.min_area or area > self.max_area:
                 continue
 
-            comp = labels == i
-            ys, xs = np.nonzero(comp)
+            # Work inside the component's own bounding box.  Comparing the
+            # whole label image against i once per component is what makes
+            # this loop quadratic in practice: a frame with a few hundred
+            # movers would scan half a megapixel a few hundred times.
+            bx = stats[i, cv2.CC_STAT_LEFT]
+            by = stats[i, cv2.CC_STAT_TOP]
+            bw = stats[i, cv2.CC_STAT_WIDTH]
+            bh = stats[i, cv2.CC_STAT_HEIGHT]
+            sub = labels[by : by + bh, bx : bx + bw] == i
+            ys, xs = np.nonzero(sub)
             if len(xs) < 3:
                 continue
 
@@ -106,7 +114,7 @@ class PuckDetector:
             if aspect > pcfg.max_streak_aspect:
                 continue
 
-            mean_val = float(gray[comp].mean())
+            mean_val = float(gray[by : by + bh, bx : bx + bw][sub].mean())
             darkness = float(np.clip((pcfg.dark_value_max - mean_val) / pcfg.dark_value_max, 0.0, 1.0))
 
             # Size score peaks at the puck's expected blurred footprint and

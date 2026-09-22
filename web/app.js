@@ -59,6 +59,8 @@ $("upload-form").addEventListener("submit", async (e) => {
   body.append("shooter_offset_ft", num("offset") ?? 0);
   if (num("hfov") !== null) body.append("hfov_deg", num("hfov"));
   if (num("fps") !== null) body.append("fps_override", num("fps"));
+  if (num("goal-w") !== null) body.append("goal_width_in", num("goal-w"));
+  if (num("goal-h") !== null) body.append("goal_height_in", num("goal-h"));
 
   try {
     const res = await fetch("/api/analyze", { method: "POST", body });
@@ -151,6 +153,14 @@ function renderStats(r) {
   if (s.corner_precision) {
     cards.push({ value: `${Math.round(s.corner_precision.best_distance_in)}"`, label: "best corner",
                  sub: "closest to a corner" });
+  }
+  // The camera distance follows from the marked net being the size it was said
+  // to be. If the wrong rectangle was marked -- a backstop frame rather than
+  // the goal -- this is the number that gives it away.
+  if (r.camera?.position_in) {
+    const ft = r.camera.position_in[2] / 12;
+    cards.push({ value: `${ft.toFixed(0)} ft`, label: "camera distance",
+                 sub: "does this look right?" });
   }
   $("stats").innerHTML = cards.map((c) => `
     <div>

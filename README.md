@@ -97,6 +97,19 @@ the footage.
    wide a puck is about three pixels across; filling the frame with the part
    that matters is free resolution.
 
+### If your net sits inside a backstop frame
+
+Mark **the goal**, not the backstop. The two are easy to confuse: both are
+rectangles, both are often the same colour, and the backstop is the more
+obvious shape in frame. But the scale of every measurement comes from the
+marked rectangle being the size you said it was. On one real setup the
+backstop was 1.67x the goal's width — marking it would have turned a 60 mph
+shot into 36 mph, with no other sign anything was wrong.
+
+The results panel reports the camera distance it derived from your marking.
+That number is the check: if it says the camera was 40 ft away and you know it
+was 25, the wrong rectangle was marked.
+
 If you shoot slow-motion, check that the file reports the real rate — many
 phones write 30 fps into a 240 fps file — and pass `--fps` if it does not.
 Every speed scales directly with it.
@@ -200,12 +213,21 @@ honestly, because the reasons are specific and mostly fixable at the camera:
 | Dappled sun through leaves | ~320 false candidates per frame | Even light |
 | Hand-held camera | up to 80 px of drift | Propping the phone |
 | Maroon goal pipe | posts at H≈159–175, **overlapping bare skin at H=177** | Marking the net by hand |
+| Detection too slow for slow-motion | 4 frames/s → 33 min for a 30 s 240 fps clip | Fixed: now 42 frames/s |
 
 The last one is the interesting failure. Colour thresholding works on a
 saturated red rink goal and cannot work here: this net's pipe sits in the same
 HSV neighbourhood as the shooter's legs, and its crossbar was washed out to
 S=26 by glare. No threshold separates those. Hence hand-marking, which is now a
 first-class path in both the CLI (`--net`) and the web app.
+
+It also exposed a performance bug that would have bitten the very fix being
+recommended. The detector compared the whole label image against each
+component in turn, so a frame with a few hundred movers scanned half a
+megapixel a few hundred times. Working inside each component's bounding box
+instead took throughput from 4 to 42 frames per second — the difference
+between 33 minutes and under 3 for a 30-second slow-motion clip. There is a
+test pinning it.
 
 What that clip changed in the code:
 
@@ -236,9 +258,9 @@ Still untested on real video, and next in line:
   merged as a rebound; two pucks genuinely in the air need real multi-target
   tracking.
 - **Shooter tutors.** A tarp over the net hides the pipe entirely.
-- **Non-regulation nets.** Backyard goals are often not 72x48. `GoalSpec` takes
-  the real dimensions, and getting them right matters — every impact position
-  scales with them.
+- **Non-regulation nets.** Backyard goals are often not 72x48. The goal mouth
+  is an input in both the CLI and the web app, and getting it right matters:
+  every impact position and speed scales with it.
 
 ## Next
 

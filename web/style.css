@@ -108,6 +108,12 @@ td .pill { font-size: .72rem; padding: .15rem .5rem; border-radius: 99px; font-w
 .notes ul { margin: 0; padding-left: 1.2rem; color: var(--muted); }
 .notes li { margin-bottom: .45rem; }
 .mark-intro { color: var(--muted); margin: 0 0 .9rem; }
+.warn {
+  background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+  border-radius: 10px; padding: .75rem .9rem; margin: 0 0 1rem;
+  color: var(--ink); font-size: .9rem;
+}
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .mark-steps { color: var(--muted); font-size: .9rem; margin: 0 0 1rem; padding-left: 1.3rem; }
 .mark-steps li { margin-bottom: .25rem; }
 .mark-steps strong { color: var(--ink); }

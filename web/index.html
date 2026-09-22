@@ -45,6 +45,14 @@
             <input type="number" id="fps" placeholder="auto" min="1" max="1000" step="1">
             <small>Set this if the clip is slow-motion; speed scales directly with it.</small>
           </label>
+          <label>
+            <span>Goal mouth <em>(inches, width &times; height)</em></span>
+            <span class="pair">
+              <input type="number" id="goal-w" value="72" min="12" max="120" step="1">
+              <input type="number" id="goal-h" value="48" min="12" max="96" step="1">
+            </span>
+            <small>A regulation net is 72 &times; 48. Change it only for a smaller training net.</small>
+          </label>
         </details>
       </div>
 
@@ -61,6 +69,10 @@
   <section id="mark-panel" class="card hidden">
     <h2>Mark the net</h2>
     <p class="mark-intro" id="mark-intro"></p>
+    <p class="warn">Mark <strong>the goal itself</strong> &mdash; the posts and crossbar a puck
+      goes between. If your net sits inside a larger backstop frame, do not mark the backstop:
+      it is wider than the goal, and marking it makes every speed read low by the same
+      proportion.</p>
     <ol class="mark-steps">
       <li>Click the <strong>top-left</strong> outside corner of the goal frame</li>
       <li>Then the <strong>top-right</strong></li>

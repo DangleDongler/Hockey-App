@@ -233,3 +233,38 @@ def test_a_low_confidence_outline_is_refused_rather_than_reported():
     notes = []
     assert detect_net(frames, cfg, notes) is None
     assert notes, "a refusal must explain itself"
+
+
+def test_detection_keeps_up_with_high_frame_rate_footage(angled_clip):
+    """Slow-motion capture is the main advice this tool gives, so it has to be
+    able to process it. A frame full of movers must not cost whole-image work
+    per mover -- that made a 30 s 240 fps clip take half an hour."""
+    import time
+
+    import cv2
+
+    from shottracker.geometry import GoalPlane
+    from shottracker.pipeline import probe, sample_frames
+    from shottracker.puck_detect import PuckDetector, build_background
+
+    cfg = Config()
+    info = probe(angled_clip["path"], cfg)
+    plane = GoalPlane(np.asarray(angled_clip["net_quad"]), cfg.goal)
+    scale = min(1.0, cfg.puck.work_width / info.width)
+    samples = sample_frames(angled_clip["path"], 24, info.frame_count)
+    small = [cv2.resize(f, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) for f in samples]
+    det = PuckDetector(cfg, build_background(small), plane.px_per_inch_at(0, 24) * 3.0 * scale, scale)
+
+    # A frame with hundreds of movers is the case that used to blow up.
+    rng = np.random.default_rng(0)
+    busy = small[0].copy()
+    for _ in range(400):
+        x, y = rng.integers(0, busy.shape[1]), rng.integers(0, busy.shape[0])
+        cv2.circle(busy, (int(x), int(y)), int(rng.integers(1, 4)), (10, 10, 10), -1)
+
+    start = time.perf_counter()
+    for i in range(20):
+        det.detect(busy, i)
+    per_frame = (time.perf_counter() - start) / 20
+
+    assert per_frame < 0.2, f"{per_frame*1000:.0f} ms/frame is too slow for slow-motion footage"

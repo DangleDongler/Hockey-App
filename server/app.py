@@ -98,6 +98,8 @@ async def create_job(
     shooter_offset_ft: float = Form(0.0),
     hfov_deg: float | None = Form(None),
     fps_override: float | None = Form(None),
+    goal_width_in: float | None = Form(None),
+    goal_height_in: float | None = Form(None),
 ):
     suffix = Path(video.filename or "clip.mp4").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -128,6 +130,10 @@ async def create_job(
         cfg.camera.assumed_focal_frac = CameraConfig.frac_from_hfov(hfov_deg)
     if fps_override:
         cfg.fps_override = fps_override
+    if goal_width_in:
+        cfg.goal.mouth_width_in = goal_width_in
+    if goal_height_in:
+        cfg.goal.mouth_height_in = goal_height_in
 
     job = Job(id=job_id, video_path=str(dest))
     with JOBS_LOCK:
