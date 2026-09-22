@@ -11,14 +11,21 @@ from shottracker.synth import camera_preset
 PRESETS = ["side", "angled", "head_on", "extreme_side"]
 
 
-def _calibrate(preset: str):
+def _calibrate(preset: str, *, jitter: float = 0.0, assumed: float | None = None):
+    """Calibrate from a perfectly-projected goal.
+
+    ``jitter`` is how imprecisely the corners are taken to be known. 0 asks
+    what the geometry says in the ideal case; the pipeline's default of a
+    pixel asks what survives real detection.
+    """
     spec = GoalSpec()
     cam = camera_preset(preset)
     corners3d = np.hstack([outer_rect(spec), np.zeros((4, 1))])
     quad = cam.project(corners3d)
     plane = GoalPlane(quad, spec)
     model = calibrate_from_homography(
-        plane.H, (cam.width, cam.height), outer_rect(spec), plane.image_quad
+        plane.H, (cam.width, cam.height), outer_rect(spec), plane.image_quad,
+        assumed_focal_px=assumed, corner_jitter_px=jitter,
     )
     return cam, model
 
@@ -62,3 +69,34 @@ def test_shot_line_angle_is_larger_from_the_side():
     _, side = _calibrate("side")
     _, head_on = _calibrate("head_on")
     assert side.shot_line_angle_deg(from_point) > head_on.shot_line_angle_deg(from_point)
+
+
+
+# --- what survives corners known only to a pixel ----------------------------
+
+@pytest.mark.parametrize("preset", ["side", "angled", "extreme_side"])
+def test_an_off_axis_view_still_measures_the_lens_under_realistic_noise(preset):
+    cam, model = _calibrate(preset, jitter=1.0, assumed=0.8 * 1280)
+    assert model is not None
+    assert not model.focal_assumed, "an off-axis goal should pin the lens down"
+    assert model.focal_px == pytest.approx(cam.fx, rel=0.15)
+
+
+def test_a_square_on_view_admits_it_cannot_measure_the_lens():
+    """Square-on, the focal length is not observable from the goal. Saying so
+    and falling back to a stated lens beats reporting a confident wrong one --
+    an earlier version returned 663 px against a true 1065."""
+    _, model = _calibrate("head_on", jitter=1.0, assumed=0.8 * 1280)
+    assert model is not None
+    assert model.focal_assumed
+    assert model.focal_px == pytest.approx(0.8 * 1280)
+
+
+def test_with_nothing_to_fall_back_on_it_declines():
+    _, model = _calibrate("head_on", jitter=1.0, assumed=None)
+    assert model is None
+
+
+def test_a_measured_focal_reports_how_much_it_moved():
+    _, model = _calibrate("side", jitter=1.0, assumed=0.8 * 1280)
+    assert 0.0 < model.focal_spread <= 0.15

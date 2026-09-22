@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 
 from .config import GRAVITY_IN_S2, IN_PER_SEC_TO_MPH, GoalSpec
+from .geometry import mouth_outline, outer_outline
 
 
 @dataclass
@@ -174,10 +175,8 @@ def draw_scene(
         r = max(2, int(0.06 * cam.fx / max(cam.depth(np.array([-180.0, 0.0, 420.0])), 1.0) * 30))
         cv2.circle(img, tuple(np.round(cx).astype(int)), r, (40, 40, 200), -1, cv2.LINE_AA)
 
-    hw_out = goal.outer_width_in / 2.0
     hw_in = goal.mouth_width_in / 2.0
     y_mouth = goal.mouth_height_in
-    y_out = goal.outer_height_in
     depth = -40.0  # the net bag extends behind the goal line
 
     # Net bag: dark interior with white mesh, drawn before the pipe.
@@ -196,15 +195,17 @@ def draw_scene(
     for gy in np.arange(0, y_mouth + 0.1, 3.0):
         _line_world(img, cam, (-hw_in, gy, depth), (hw_in, gy, depth), mesh, 1)
 
-    # The red pipe: two posts and a crossbar, drawn as their true rectangles so
-    # the outer outline is exactly the rectangle the detector is asked to find.
+    # The red pipe, bent where the posts meet the crossbar the way a real frame
+    # is.  Drawing square corners here would let the detector off the hook: the
+    # corner it has to recover is where the straight sections *would* meet, a
+    # point that does not physically exist on the goal.
     red = (36, 34, 196)
-    left_post = [(-hw_out, y_out, 0), (-hw_in, y_out, 0), (-hw_in, 0, 0), (-hw_out, 0, 0)]
-    right_post = [(hw_in, y_out, 0), (hw_out, y_out, 0), (hw_out, 0, 0), (hw_in, 0, 0)]
-    crossbar = [(-hw_out, y_out, 0), (hw_out, y_out, 0), (hw_out, y_mouth, 0), (-hw_out, y_mouth, 0)]
-    _fill_poly_world(img, cam, left_post, red)
-    _fill_poly_world(img, cam, right_post, red)
-    _fill_poly_world(img, cam, crossbar, red)
+    out2d = outer_outline(goal)
+    in2d = mouth_outline(goal)
+    outer = np.hstack([out2d, np.zeros((len(out2d), 1))])
+    inner = np.hstack([in2d, np.zeros((len(in2d), 1))])
+    ring = np.vstack([outer, inner[::-1]])
+    _fill_poly_world(img, cam, ring, red)
 
     noise = rng.normal(0.0, 3.0, img.shape).astype(np.float32)
     return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)

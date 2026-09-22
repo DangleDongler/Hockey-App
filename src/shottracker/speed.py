@@ -287,6 +287,21 @@ def estimate_speed(
     if not results:
         return None
 
+    # A degenerate fit can produce a number like 87,000 mph.  Such a value is
+    # not a speed with a large error bar, it is a failed solve, and it must not
+    # be preferred over a workable estimate just because it scored well.
+    scfg_band = cfg.speed
+    absurd = [
+        r for r in results
+        if not (0.2 * scfg_band.plausible_min_mph <= r.mph <= 5.0 * scfg_band.plausible_max_mph)
+    ]
+    usable = [r for r in results if r not in absurd]
+    if usable:
+        for r in absurd:
+            usable_note = f"{r.method} returned {r.mph:.0f} mph, which is not a physical result; ignored"
+            usable[0].notes.append(usable_note)
+        results = usable
+
     wanted = cfg.speed.method
     chosen = None
     if wanted != "auto":

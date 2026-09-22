@@ -262,11 +262,31 @@ function drawMark() {
   ctx.lineWidth = Math.max(2, canvas.width * 0.005);
 
   if (pts.length > 1) {
+    // Extend every edge right across the frame. Lining a long line up with a
+    // straight length of pipe is something the eye does well; locating the
+    // corner itself is not, because the pipe bends and the corner is a point
+    // that only exists where the two straight sections would have met.
+    ctx.strokeStyle = "rgba(56,189,248,0.35)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([7, 7]);
+    const edges = pts.length === 4 ? [[0, 1], [1, 2], [2, 3], [3, 0]] : [[0, 1]];
+    for (const [a, b] of edges) {
+      if (!pts[a] || !pts[b]) continue;
+      const dx = pts[b][0] - pts[a][0];
+      const dy = pts[b][1] - pts[a][1];
+      const n = Math.hypot(dx, dy) || 1;
+      const k = (canvas.width + canvas.height) / n;
+      line(ctx, pts[a][0] - dx * k, pts[a][1] - dy * k, pts[b][0] + dx * k, pts[b][1] + dy * k);
+    }
+    ctx.setLineDash([]);
+
     ctx.strokeStyle = "#38bdf8";
+    ctx.lineWidth = Math.max(2, canvas.width * 0.005);
     ctx.beginPath();
     pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
     if (pts.length === 4) ctx.closePath();
     ctx.stroke();
+    if (pts.length === 4) drawMouthPreview(ctx, pts);
   }
   const labels = ["TL", "TR", "BR", "BL"];
   pts.forEach(([x, y], i) => {
@@ -291,6 +311,46 @@ function drawMark() {
 
   drawLoupe(ctx, canvas);
   updateMarkStatus();
+}
+
+/* Preview of the opening the marked corners imply, bends and all, so what is
+   on screen matches the net being looked at. */
+function drawMouthPreview(ctx, quad) {
+  const gw = Number($("goal-w")?.value) || 72;
+  const gh = Number($("goal-h")?.value) || 48;
+  const post = 2.375;
+  const rad = 4;
+  // Bilinear placement inside the marked outer quad is close enough for a
+  // preview; the analysis itself uses the full homography.
+  const at = (u, v) => {
+    const [tl, tr, br, bl] = quad;
+    const top = [tl[0] + (tr[0] - tl[0]) * u, tl[1] + (tr[1] - tl[1]) * u];
+    const bot = [bl[0] + (br[0] - bl[0]) * u, bl[1] + (br[1] - bl[1]) * u];
+    return [bot[0] + (top[0] - bot[0]) * v, bot[1] + (top[1] - bot[1]) * v];
+  };
+  const ow = gw + 2 * post;
+  const oh = gh + post;
+  const ux = (xin) => (xin + ow / 2) / ow;
+  const uy = (yin) => yin / oh;
+
+  const path = [];
+  path.push(at(ux(-gw / 2), uy(0)));
+  const steps = 10;
+  for (let i = 0; i <= steps; i++) {
+    const t = Math.PI - (i / steps) * (Math.PI / 2);
+    path.push(at(ux(-gw / 2 + rad + rad * Math.cos(t)), uy(gh - rad + rad * Math.sin(t))));
+  }
+  for (let i = 0; i <= steps; i++) {
+    const t = Math.PI / 2 - (i / steps) * (Math.PI / 2);
+    path.push(at(ux(gw / 2 - rad + rad * Math.cos(t)), uy(gh - rad + rad * Math.sin(t))));
+  }
+  path.push(at(ux(gw / 2), uy(0)));
+
+  ctx.strokeStyle = "rgba(34,197,94,0.9)";
+  ctx.lineWidth = Math.max(1.5, ctx.canvas.width * 0.004);
+  ctx.beginPath();
+  path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
 }
 
 /* A magnifier under the cursor. Goal pipe is a few pixels wide in phone
@@ -535,16 +595,22 @@ function drawChart() {
     }
   }
 
-  // The pipe.
+  // The pipe, bent where the posts meet the crossbar like the real thing.
   const pipe = (goal.post_diameter_in ?? 2.375) * s;
+  const rad = Math.min(goal.corner_radius_in ?? 4, W / 2, H);
   ctx.strokeStyle = "#dc2626";
   ctx.lineWidth = pipe;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   ctx.beginPath();
-  ctx.moveTo(X(-W / 2) - pipe / 2, Y(0));
-  ctx.lineTo(X(-W / 2) - pipe / 2, Y(H) - pipe / 2);
-  ctx.lineTo(X(W / 2) + pipe / 2, Y(H) - pipe / 2);
-  ctx.lineTo(X(W / 2) + pipe / 2, Y(0));
+  ctx.moveTo(X(-W / 2), Y(0));
+  ctx.lineTo(X(-W / 2), Y(H - rad));
+  ctx.quadraticCurveTo(X(-W / 2), Y(H), X(-W / 2 + rad), Y(H));
+  ctx.lineTo(X(W / 2 - rad), Y(H));
+  ctx.quadraticCurveTo(X(W / 2), Y(H), X(W / 2), Y(H - rad));
+  ctx.lineTo(X(W / 2), Y(0));
   ctx.stroke();
+  ctx.lineCap = "butt";
 
   // The marks.
   state.chartHits = [];
@@ -621,8 +687,8 @@ function drawOverlay() {
 }
 
 function drawNet(ctx, r, zones) {
-  const outer = r.net.quad;
-  const mouth = r.goal?.mouth_quad;
+  const outer = r.goal?.outer_outline ?? r.net.quad;
+  const mouth = r.goal?.mouth_outline ?? r.goal?.mouth_quad;
   ctx.lineWidth = 3;
   ctx.strokeStyle = "#38bdf8";
   poly(ctx, outer);
@@ -630,11 +696,12 @@ function drawNet(ctx, r, zones) {
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = "rgba(56,189,248,0.55)";
     poly(ctx, mouth);
-    if (zones) {
-      // Interpolate the mouth quad's edges to draw the grid in perspective.
+    if (zones && r.goal?.mouth_quad) {
+      // The zone grid is a flat 3x3 over the opening, so it is still drawn
+      // from the quad's corners rather than the bent outline.
       ctx.lineWidth = 1;
       ctx.strokeStyle = "rgba(56,189,248,0.3)";
-      const [tl, tr, br, bl] = mouth;
+      const [tl, tr, br, bl] = r.goal.mouth_quad;
       for (const f of [1 / 3, 2 / 3]) {
         line(ctx, ...lerp(tl, tr, f), ...lerp(bl, br, f));
         line(ctx, ...lerp(tl, bl, f), ...lerp(tr, br, f));

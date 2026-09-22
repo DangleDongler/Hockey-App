@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from .config import Config
-from .geometry import GoalPlane, mouth_rect
+from .geometry import GoalPlane, mouth_outline, outer_outline
 from .pipeline import SessionResult
 
 OUTCOME_BGR = {"on_net": (94, 197, 34), "post": (11, 158, 245), "miss": (68, 68, 239)}
@@ -19,8 +19,10 @@ TRAIL_BGR = (255, 255, 255)
 
 
 def draw_net(frame: np.ndarray, plane: GoalPlane, *, zones: bool = True) -> None:
-    outer = plane.image_quad.astype(np.int32)
-    mouth = plane.to_image(mouth_rect(plane.goal)).astype(np.int32)
+    # Follow the pipe's real bend rather than drawing a box with corners the
+    # goal does not have.
+    outer = plane.to_image(outer_outline(plane.goal)).astype(np.int32)
+    mouth = plane.to_image(mouth_outline(plane.goal)).astype(np.int32)
     cv2.polylines(frame, [outer], True, NET_BGR, 2, cv2.LINE_AA)
     cv2.polylines(frame, [mouth], True, NET_BGR, 1, cv2.LINE_AA)
     if not zones:

@@ -17,7 +17,7 @@ import numpy as np
 
 from .camera import CameraModel, calibrate_from_homography
 from .config import PUCK_DIAMETER_IN, Config
-from .geometry import GoalPlane, build_zones, outer_rect
+from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
 from .net_detect import NetDetection, detect_net
 from .puck_detect import Candidate, PuckDetector, build_background
 from .shots import Shot, dedupe_shots, shot_from_track
@@ -91,8 +91,21 @@ class SessionResult:
                 "mouth_width_in": self.config.goal.mouth_width_in,
                 "mouth_height_in": self.config.goal.mouth_height_in,
                 "post_diameter_in": self.config.goal.post_diameter_in,
+                "corner_radius_in": self.config.goal.corner_radius_in,
                 "mouth_quad": (
                     self.plane.mouth_image_quad.round(1).tolist() if self.net else None
+                ),
+                # The opening's real shape in image pixels, bends included, so
+                # the browser draws the goal rather than a box.
+                "mouth_outline": (
+                    self.plane.to_image(mouth_outline(self.config.goal)).round(1).tolist()
+                    if self.net
+                    else None
+                ),
+                "outer_outline": (
+                    self.plane.to_image(outer_outline(self.config.goal)).round(1).tolist()
+                    if self.net
+                    else None
                 ),
             },
             "summary": summarize(self),

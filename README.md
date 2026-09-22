@@ -123,18 +123,20 @@ exactly. Reproduce with `shottracker benchmark`:
 camera         net   shots   on-net  off-net   zones    speed   worst  in bars
            % width   found   inches   inches   right   mean %       %
 ------------------------------------------------------------------------------
-side          0.66     4/4      1.3      6.6     4/4      1.4     2.8      4/4
-angled        0.60     4/4      0.7      3.6     4/4      0.7     2.3      4/4
-head_on       0.40     4/4      0.4      1.1     4/4      6.6     8.3      4/4   (lens assumed)
+side          0.57     4/4      1.3      6.6     4/4      1.2     3.1      4/4
+angled        0.75     4/4      0.6      3.5     4/4      1.5     2.9      4/4
+head_on       0.39     4/4      0.3      1.1     4/4      1.0     1.5      4/4   (lens assumed)
 ```
+
+The synthetic goal has bent corners like a real frame, so the corner the
+detector has to recover is the point where the two straight sections *would*
+meet — which no pixel sits on. It finds it to within 0.8% of the goal's width.
 
 So on a 72" × 48" goal mouth, impacts land within about an inch, every shot's
 target zone is identified correctly, and speed is within a couple of percent
-when the camera is off to one side. Square-on to the net, speed degrades to
-under 10% because the lens has to be assumed — and the reported error bar grows
-to match. Every shot's true speed fell inside its stated ± in all three cases,
-which is the property that actually matters: a number without an honest error
-bar is worse than no number.
+from any of the three camera positions. Every shot's true speed fell inside its
+stated ± in all three cases, which is the property that actually matters: a
+number without an honest error bar is worse than no number.
 
 These are synthetic clips. They model perspective, motion blur, sensor noise,
 ballistic flight and the red rink lines that trip up a naive detector, but they
@@ -147,7 +149,7 @@ Five stages, in `src/shottracker/`:
 | Stage | File | What it does |
 | --- | --- | --- |
 | Find the goal | `net_detect.py` | Segments the red pipe in HSV, fits the outer edge of each post and the top of the crossbar with RANSAC, and intersects them for the corners. Repeated over frames sampled across the clip; the median of the frames that agree wins. |
-| Calibrate | `camera.py` | Four corners of a rectangle of known size determine the camera. Solves focal length from the orthonormality of the rotation's columns, then pose. |
+| Calibrate | `camera.py` | Four corners of a rectangle of known size determine the camera. Solves focal length from the orthonormality of the rotation's columns, then pose — keeping the estimate that survives jittering the corners by the pixel they are known to. |
 | Steady the view | `stabilize.py` | Optional per-frame translation for hand-held clips. Off by default. |
 | Find the puck | `puck_detect.py` | A per-pixel median over the clip is a clean, puck-free plate of the rink. Anything differing from it is a scored candidate. |
 | Follow it | `tracking.py` | Grows trajectories best-first with velocity gating, then keeps only those that travel fast, in one direction, along a straight line in the image. |
@@ -158,6 +160,28 @@ inches with its origin on the ice at the centre of the mouth. A regulation goal
 is 72" × 48" of known geometry, so finding it in the image fixes the scale for
 everything else. Impacts are reported in that frame, which is why they can be
 quoted in inches rather than pixels.
+
+### The goal is not a box
+
+Posts and crossbar are joined by a bend, so the mouth's top corners are
+rounded and the "corner" is a point that does not physically exist — it is
+where the two straight sections would meet. That matters more than it sounds:
+the goal's known size is what sets the scale for every measurement, so anyone
+aiming at the *visible* corner under-sizes the goal by roughly the bend radius
+and pulls every speed down with it.
+
+So the marking screen extends each edge into a long dashed line and asks you to
+lay those along the straight lengths of pipe. Lining a line up with an edge is
+something the eye does well; locating a corner that is not there is not. The
+automatic detector already worked this way — it fits the post and crossbar
+edges and intersects them — and on synthetic footage with bent corners it
+recovers the true intersection to within 0.8% of the goal's width.
+
+The bend is modelled rather than ignored: shots arriving in it are reported as
+"left corner bend" rather than counted as goals, and the drawn outline follows
+the pipe instead of cutting the corner. `GoalSpec.corner_radius_in` defaults to
+an approximate 4 inches; it only affects that call and the drawing, never the
+scale.
 
 ### Speed, and why it is the hard part
 

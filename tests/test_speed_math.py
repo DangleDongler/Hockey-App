@@ -49,3 +49,32 @@ def test_rays_point_from_the_camera_toward_the_scene():
     # Walking along the ray from the camera must arrive at the target.
     to_target = target[0] - origin
     assert np.allclose(dirs[0], to_target / np.linalg.norm(to_target), atol=1e-6)
+
+
+def test_an_absurd_estimate_never_wins():
+    """A degenerate solve returns a number, not a speed. It must not be picked
+    over a workable estimate just because its residuals looked tidy."""
+    from shottracker.config import Config
+    from shottracker.speed import SpeedEstimate, estimate_speed
+
+    cfg = Config()
+    results = [
+        SpeedEstimate(mph=87474.0, method="time_of_flight", confidence=0.97),
+        SpeedEstimate(mph=62.0, method="goal_plane", confidence=0.30),
+    ]
+
+    import shottracker.speed as speed_mod
+
+    original = speed_mod.estimate_goal_plane
+    try:
+        # Drive estimate_speed's selection directly with the two candidates.
+        speed_mod.estimate_time_of_flight = lambda *a, **k: results[0]
+        speed_mod.estimate_ballistic_3d = lambda *a, **k: None
+        speed_mod.estimate_goal_plane = lambda *a, **k: results[1]
+        chosen = estimate_speed(None, None, object(), np.array([0.0, 24.0]), 120.0, cfg)
+    finally:
+        speed_mod.estimate_goal_plane = original
+
+    assert chosen is not None
+    assert chosen.mph == pytest.approx(62.0)
+    assert any("not a physical result" in n for n in chosen.notes)

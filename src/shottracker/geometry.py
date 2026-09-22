@@ -90,6 +90,79 @@ def order_quad(pts: np.ndarray) -> np.ndarray:
     return np.roll(pts, -start, axis=0)
 
 
+def mouth_outline(goal: GoalSpec, *, samples_per_corner: int = 14) -> np.ndarray:
+    """The goal mouth's real shape, in goal coordinates.
+
+    Straight up each post, around the bend into the crossbar, and back down --
+    which is what a goal actually looks like.  A four-cornered box overstates
+    the opening at the top corners by roughly the bend radius, and a puck that
+    "lands" there in fact rings off the pipe.
+
+    Returned counter-clockwise from the foot of the left post, closed along the
+    ice.
+    """
+    hw = goal.mouth_width_in / 2.0
+    top = goal.mouth_height_in
+    r = max(0.0, min(goal.corner_radius_in, hw, top))
+
+    pts: list[tuple[float, float]] = [(-hw, 0.0)]
+    if r > 1e-6:
+        # Bend at the top-left, centred inside the corner.
+        cx, cy = -hw + r, top - r
+        for t in np.linspace(np.pi, np.pi / 2, samples_per_corner):
+            pts.append((cx + r * np.cos(t), cy + r * np.sin(t)))
+        cx = hw - r
+        for t in np.linspace(np.pi / 2, 0.0, samples_per_corner):
+            pts.append((cx + r * np.cos(t), cy + r * np.sin(t)))
+    else:
+        pts.extend([(-hw, top), (hw, top)])
+    pts.append((hw, 0.0))
+    return np.array(pts, dtype=np.float64)
+
+
+def outer_outline(goal: GoalSpec, *, samples_per_corner: int = 14) -> np.ndarray:
+    """The outside of the pipe, following the same bend."""
+    hw = goal.outer_width_in / 2.0
+    top = goal.outer_height_in
+    r = max(0.0, goal.corner_radius_in + goal.post_diameter_in)
+    r = min(r, hw, top)
+
+    pts: list[tuple[float, float]] = [(-hw, 0.0)]
+    if r > 1e-6:
+        cx, cy = -hw + r, top - r
+        for t in np.linspace(np.pi, np.pi / 2, samples_per_corner):
+            pts.append((cx + r * np.cos(t), cy + r * np.sin(t)))
+        cx = hw - r
+        for t in np.linspace(np.pi / 2, 0.0, samples_per_corner):
+            pts.append((cx + r * np.cos(t), cy + r * np.sin(t)))
+    else:
+        pts.extend([(-hw, top), (hw, top)])
+    pts.append((hw, 0.0))
+    return np.array(pts, dtype=np.float64)
+
+
+def point_in_mouth(goal: GoalSpec, x: float, y: float) -> bool:
+    """Whether a point on the goal plane is inside the opening.
+
+    Differs from the bounding rectangle only at the two top corners, which is
+    exactly where shots get interesting.
+    """
+    hw = goal.mouth_width_in / 2.0
+    top = goal.mouth_height_in
+    if not (-hw <= x <= hw and 0.0 <= y <= top):
+        return False
+    r = max(0.0, min(goal.corner_radius_in, hw, top))
+    if r <= 1e-6:
+        return True
+    cy = top - r
+    if y > cy:
+        for cx in (-hw + r, hw - r):
+            beyond = x < cx if cx < 0 else x > cx
+            if beyond:
+                return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+    return True
+
+
 def outer_rect(goal: GoalSpec) -> np.ndarray:
     """The goal's outer pipe rectangle in goal coordinates, in TL/TR/BR/BL order."""
     hw = goal.outer_width_in / 2.0

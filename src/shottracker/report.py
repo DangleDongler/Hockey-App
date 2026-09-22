@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .geometry import build_zones
+from .geometry import build_zones, mouth_outline
 
 if TYPE_CHECKING:  # pragma: no cover
     from .pipeline import SessionResult
@@ -97,8 +97,12 @@ def shot_chart_svg(result: "SessionResult", *, width_px: int = 900, show_zones: 
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width_px} {height_px}" '
         f'width="{width_px}" height="{height_px}" font-family="system-ui, sans-serif">',
         f'<rect width="{width_px}" height="{height_px}" fill="#f8fafc"/>',
-        f'<rect x="{X(-spec.mouth_width_in/2):.1f}" y="{Y(spec.mouth_height_in):.1f}" '
-        f'width="{spec.mouth_width_in*s:.1f}" height="{spec.mouth_height_in*s:.1f}" fill="#ffffff"/>',
+        '<path d="'
+        + " ".join(
+            f"{'M' if i == 0 else 'L'} {X(px):.1f} {Y(py):.1f}"
+            for i, (px, py) in enumerate(mouth_outline(spec))
+        )
+        + ' Z" fill="#ffffff"/>',
     ]
 
     # Mesh.
@@ -130,12 +134,15 @@ def shot_chart_svg(result: "SessionResult", *, width_px: int = 900, show_zones: 
                     f'font-size="{max(11, 0.018*width_px):.0f}" fill="#16a34a" font-weight="600">{n}</text>'
                 )
 
-    # The pipe.
+    # The pipe, following the bend where the posts meet the crossbar.
     pipe = spec.post_diameter_in * s
+    path = " ".join(
+        f"{'M' if i == 0 else 'L'} {X(px):.1f} {Y(py):.1f}"
+        for i, (px, py) in enumerate(mouth_outline(spec))
+    )
     parts.append(
-        f'<rect x="{X(-spec.mouth_width_in/2)-pipe:.1f}" y="{Y(spec.mouth_height_in)-pipe:.1f}" '
-        f'width="{spec.mouth_width_in*s + 2*pipe:.1f}" height="{spec.mouth_height_in*s + pipe:.1f}" '
-        f'fill="none" stroke="#dc2626" stroke-width="{pipe:.1f}"/>'
+        f'<path d="{path}" fill="none" stroke="#dc2626" stroke-width="{pipe:.1f}" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>'
     )
 
     for shot in result.shots:

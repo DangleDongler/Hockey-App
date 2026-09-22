@@ -15,7 +15,7 @@ import numpy as np
 
 from .camera import CameraModel
 from .config import Config
-from .geometry import GoalPlane, Zone, build_zones, zone_for
+from .geometry import GoalPlane, Zone, build_zones, point_in_mouth, zone_for
 from .speed import SpeedEstimate, estimate_speed
 from .tracking import Track
 
@@ -70,7 +70,15 @@ def _classify(
     top = goal.mouth_height_in
     tol = cfg.shot.post_tolerance_in
 
-    inside = (-hw <= x <= hw) and (0.0 <= y <= top)
+    inside = point_in_mouth(goal, x, y)
+
+    # The bend where post meets crossbar comes first: it sits within a pipe's
+    # width of both straight edges, so a plain "post" or "crossbar" test would
+    # always claim it, and "rang it off the top corner" is the better answer.
+    in_box = (-hw <= x <= hw) and (0.0 <= y <= top)
+    if in_box and not inside:
+        side = "left" if x < 0 else "right"
+        return "post", None, f"{side} corner bend"
 
     # Within a pipe's width of the frame line, either side of it, is iron.
     near_left = abs(x + hw) <= tol

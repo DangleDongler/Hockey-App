@@ -92,3 +92,34 @@ def test_contains_image_point():
     outside = plane.to_image([[60.0, 24.0]])[0]
     assert plane.contains_image_point(inside)
     assert not plane.contains_image_point(outside)
+
+
+def test_mouth_outline_follows_the_bend_not_a_box():
+    """A goal's corners are bends, so the opening is smaller there than a
+    rectangle says, and a shot that 'lands' there really rings off the pipe."""
+    from shottracker.geometry import mouth_outline, point_in_mouth
+
+    spec = GoalSpec()
+    outline = mouth_outline(spec)
+    assert outline[:, 0].min() == pytest.approx(-spec.mouth_width_in / 2)
+    assert outline[:, 0].max() == pytest.approx(spec.mouth_width_in / 2)
+    assert outline[:, 1].max() == pytest.approx(spec.mouth_height_in)
+    assert outline[:, 1].min() == pytest.approx(0.0)
+
+    hw, top, r = spec.mouth_width_in / 2, spec.mouth_height_in, spec.corner_radius_in
+    # Deep in the corner of the bounding box is pipe, not opening.
+    assert not point_in_mouth(spec, -hw + 0.2, top - 0.2)
+    assert not point_in_mouth(spec, hw - 0.2, top - 0.2)
+    # Just inside the arc is still the opening.
+    assert point_in_mouth(spec, -hw + r + 1.0, top - 1.0)
+    assert point_in_mouth(spec, 0.0, top)
+    # Bottom corners have no bend: the posts stand on the ice.
+    assert point_in_mouth(spec, -hw + 0.2, 0.2)
+
+
+def test_a_square_goal_spec_behaves_like_a_rectangle():
+    from shottracker.geometry import point_in_mouth
+
+    spec = GoalSpec(corner_radius_in=0.0)
+    hw, top = spec.mouth_width_in / 2, spec.mouth_height_in
+    assert point_in_mouth(spec, -hw + 0.01, top - 0.01)

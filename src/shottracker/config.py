@@ -15,6 +15,11 @@ from typing import Any
 GOAL_MOUTH_WIDTH_IN = 72.0   # 6 ft between the inside edges of the posts
 GOAL_MOUTH_HEIGHT_IN = 48.0  # 4 ft from the ice to the underside of the crossbar
 POST_DIAMETER_IN = 2.375     # 2 3/8" goal pipe
+# Posts and crossbar are joined by a bend, not a mitre, so the mouth's top
+# corners are rounded.  Approximate: it varies between makes, and it is only
+# used for drawing and for calling corner hits -- the scale comes from where
+# the straight sections of pipe would meet, which the radius does not move.
+CORNER_RADIUS_IN = 4.0
 PUCK_DIAMETER_IN = 3.0
 PUCK_THICKNESS_IN = 1.0
 
@@ -34,6 +39,7 @@ class GoalSpec:
     mouth_width_in: float = GOAL_MOUTH_WIDTH_IN
     mouth_height_in: float = GOAL_MOUTH_HEIGHT_IN
     post_diameter_in: float = POST_DIAMETER_IN
+    corner_radius_in: float = CORNER_RADIUS_IN
 
     @property
     def outer_width_in(self) -> float:

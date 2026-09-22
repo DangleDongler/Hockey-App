@@ -268,3 +268,23 @@ def test_detection_keeps_up_with_high_frame_rate_footage(angled_clip):
     per_frame = (time.perf_counter() - start) / 20
 
     assert per_frame < 0.2, f"{per_frame*1000:.0f} ms/frame is too slow for slow-motion footage"
+
+
+def test_a_shot_into_the_corner_bend_is_called_a_post():
+    """The bounding rectangle says this is in the net; the real goal says iron."""
+    from shottracker.geometry import GoalPlane
+    from shottracker.shots import _classify
+
+    cfg = Config()
+    quad = np.array([[100, 100], [867.5, 100], [867.5, 603.75], [100, 603.75]], dtype=float)
+    plane = GoalPlane(quad, cfg.goal)
+    zones = build_zones(cfg.goal)
+
+    hw, top = cfg.goal.mouth_width_in / 2, cfg.goal.mouth_height_in
+    outcome, _, detail = _classify(-hw + 0.3, top - 0.3, plane, zones, cfg)
+    assert outcome == "post"
+    assert "corner" in detail
+
+    # Well inside the same zone is still a goal.
+    outcome, key, _ = _classify(-hw + 10, top - 10, plane, zones, cfg)
+    assert outcome == "on_net" and key == "top_left"
