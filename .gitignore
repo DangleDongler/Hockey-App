@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Analysis output and uploaded clips. Test fixtures are rendered at run time
+# into a temporary directory, so no video belongs in the repository.
+out/
+uploads/
+*.mp4
+*.mov
+*.avi
+.DS_Store

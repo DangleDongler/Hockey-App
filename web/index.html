@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shot Tracker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1220'/%3E%3Crect x='6' y='9' width='20' height='15' fill='none' stroke='%23dc2626' stroke-width='3'/%3E%3Ccircle cx='11' cy='13' r='2.5' fill='%2322c55e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Shot Tracker</h1>
+  <p class="tagline">Film yourself shooting. Find out how hard and how accurate.</p>
+</header>
+
+<main>
+  <section id="upload-panel" class="card">
+    <form id="upload-form">
+      <label class="file-drop" id="file-drop">
+        <input type="file" id="video-input" accept="video/*" required>
+        <span class="file-drop-text">Choose a clip, or drop one here</span>
+        <span class="file-name" id="file-name"></span>
+      </label>
+
+      <div class="fields">
+        <label>
+          <span>Shooting distance <em>(feet)</em></span>
+          <input type="number" id="distance" value="20" min="3" max="120" step="0.5">
+          <small>The one number that most improves speed accuracy.</small>
+        </label>
+        <label>
+          <span>Offset from net centre <em>(feet)</em></span>
+          <input type="number" id="offset" value="0" min="-60" max="60" step="0.5">
+          <small>Negative is to the shooter's left. 0 if straight on.</small>
+        </label>
+        <details class="advanced">
+          <summary>Camera details</summary>
+          <label>
+            <span>Field of view <em>(degrees)</em></span>
+            <input type="number" id="hfov" placeholder="auto" min="20" max="140" step="1">
+            <small>Only used when the camera is too square-on for the net to reveal it.</small>
+          </label>
+          <label>
+            <span>Frame rate override</span>
+            <input type="number" id="fps" placeholder="auto" min="1" max="1000" step="1">
+            <small>Set this if the clip is slow-motion; speed scales directly with it.</small>
+          </label>
+        </details>
+      </div>
+
+      <button type="submit" id="submit-btn">Analyze</button>
+    </form>
+
+    <div id="progress" class="progress hidden">
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      <p id="progress-text">Uploading&hellip;</p>
+    </div>
+    <p id="error" class="error hidden"></p>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="stats card" id="stats"></div>
+
+    <div class="split">
+      <div class="card">
+        <h2>The footage</h2>
+        <div class="video-wrap">
+          <video id="video" controls playsinline></video>
+          <canvas id="overlay"></canvas>
+        </div>
+        <label class="toggle"><input type="checkbox" id="show-zones" checked> Show target zones</label>
+        <p class="hint" id="video-hint"></p>
+      </div>
+
+      <div class="card">
+        <h2>Where the pucks went</h2>
+        <canvas id="chart" width="900" height="660"></canvas>
+        <p class="legend">
+          <span class="dot on-net"></span> on net
+          <span class="dot post"></span> post
+          <span class="dot miss"></span> missed
+          <span class="legend-hint">Click a mark to jump to that shot.</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Shot by shot</h2>
+      <table id="shot-table"></table>
+    </div>
+
+    <div class="card notes hidden" id="notes-card">
+      <h2>Worth knowing</h2>
+      <ul id="notes"></ul>
+    </div>
+
+    <button id="again" class="secondary">Analyze another clip</button>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
