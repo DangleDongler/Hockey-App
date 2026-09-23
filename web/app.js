@@ -13,7 +13,7 @@ const state = {
   jobId: null,
   result: null,
   chartHits: [],   // click targets on the shot chart
-  mark: { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null },
+  mark: { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false },
 };
 
 /* ---------------------------------------------------------------- upload */
@@ -79,7 +79,7 @@ $("upload-form").addEventListener("submit", async (e) => {
 $("again").addEventListener("click", () => {
   $("results").classList.add("hidden");
   $("mark-panel").classList.add("hidden");
-  state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null };
+  state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false };
   $("upload-panel").classList.remove("hidden");
   $("submit-btn").disabled = false;
   $("progress").classList.add("hidden");
@@ -296,16 +296,44 @@ async function offerManualMarking(result) {
 function loadMarkFrame() {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       state.mark.img = img;
       const canvas = $("mark-canvas");
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
+      await suggestCorners();
       drawMark();
       resolve();
     };
     img.src = `/api/jobs/${state.jobId}/frame.png?frame=${state.mark.frame}`;
   });
+}
+
+// Ask the server to find the goal in this frame and start from that. The
+// player only has to check the dashed lines and nudge a corner if it is off.
+async function suggestCorners() {
+  // Never overwrite corners the player has started placing themselves.
+  if (state.mark.corners.length && !state.mark.suggested) return;
+  try {
+    const res = await fetch(`/api/jobs/${state.jobId}/suggest-net?frame=${state.mark.frame}`);
+    const s = await res.json();
+    if (s.quad) {
+      state.mark.corners = s.quad.map(([x, y]) => [x, y]);
+      state.mark.suggested = true;
+      $("mark-go").disabled = false;
+      $("mark-found").textContent =
+        "Found the goal in this frame. Check the dashed lines sit on the outside of the pipe, " +
+        "drag any corner that is off, then analyze.";
+      $("mark-found").classList.remove("hidden");
+    } else {
+      if (state.mark.suggested) state.mark.corners = [];
+      state.mark.suggested = false;
+      $("mark-go").disabled = state.mark.corners.length !== 4;
+      $("mark-found").classList.add("hidden");
+    }
+  } catch {
+    // A failed suggestion just means marking by hand, which always works.
+  }
 }
 
 $("mark-frame").addEventListener("change", async (e) => {
@@ -522,6 +550,7 @@ function onMarkDown(e) {
   const hit = nearestCorner(pt);
   if (hit !== null) {
     state.mark.dragging = hit;
+    state.mark.suggested = false;
   } else if (state.mark.corners.length < 4) {
     state.mark.corners.push([pt.x, pt.y]);
   }
@@ -552,6 +581,7 @@ markCanvas.addEventListener("touchmove", onMarkMove, { passive: false });
 markCanvas.addEventListener("touchend", onMarkUp);
 
 $("mark-undo").addEventListener("click", () => {
+  state.mark.suggested = false;
   state.mark.corners.pop();
   $("mark-go").disabled = state.mark.corners.length !== 4;
   drawMark();

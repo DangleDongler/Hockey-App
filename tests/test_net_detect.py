@@ -68,3 +68,93 @@ def test_gives_up_rather_than_guessing_on_a_frame_with_no_net():
     cv2.circle(blank, (640, 360), 80, (40, 40, 200), -1)  # a red blob, not a goal
     assert detect_net_in_frame(blank, Config()) is None
     assert detect_net([blank] * 5, Config()) is None
+
+
+# --- finding a goal by its shape --------------------------------------------
+#
+# The colour method needs bright red pipe.  Real backyard nets are often a dark
+# maroon in shade, washed out in sun, and the same hue as the shooter's legs.
+# These tests pin down the shape method that handles them, and each of the
+# ways it went wrong on real footage.
+
+MAROON = (60, 30, 120)      # BGR; shaded goal pipe, H ~170
+LIGHT_BAR = (205, 205, 205)  # a crossbar washed out by sun, seen through mesh
+
+
+def _goal_like(img, x0, x1, top, foot, post_w=6, bar=LIGHT_BAR):
+    cv2.rectangle(img, (x0, top), (x0 + post_w, foot), MAROON, -1)
+    cv2.rectangle(img, (x1 - post_w, top), (x1, foot), MAROON, -1)
+    cv2.rectangle(img, (x0, top), (x1, top + post_w), bar, -1)
+
+
+def _backdrop(h=720, w=1280, seed=0):
+    rng = np.random.default_rng(seed)
+    img = np.full((h, w, 3), 95, dtype=np.uint8)
+    return np.clip(img.astype(np.int16) + rng.normal(0, 3, img.shape), 0, 255).astype(np.uint8)
+
+
+@pytest.mark.parametrize("clip", ["side_clip", "head_on_clip"])
+def test_the_shape_method_finds_a_bent_goal_from_any_angle(clip, request):
+    truth = request.getfixturevalue(clip)
+    cfg = Config()
+    cfg.net.method = "posts"
+    det = detect_net(_frames(truth), cfg)
+    assert det is not None and det.method == "posts"
+    assert _max_error_fraction(det.quad, truth["net_quad"]) < 0.05
+
+
+def test_a_dark_goal_with_a_washed_out_crossbar_is_found():
+    img = _backdrop()
+    _goal_like(img, 500, 800, 300, 500)
+    got = detect_net_in_frame(img, Config())
+    assert got is not None
+    quad, _, method = got
+    assert method == "posts"
+    expected = np.array([[500, 300], [800, 300], [800, 500], [500, 500]], dtype=float)
+    assert np.abs(quad - expected).max() < 8
+
+
+def test_upright_bars_with_nothing_across_them_are_not_a_goal():
+    """A fence is a row of thin upright boards. Without a bar joining two posts'
+    tops there is no goal height to read, so nothing is reported."""
+    img = _backdrop()
+    for x in range(420, 900, 60):
+        cv2.rectangle(img, (x, 280), (x + 6, 520), MAROON, -1)
+    assert detect_net_in_frame(img, Config()) is None
+
+
+def test_a_goal_inside_a_backstop_frame_is_taken_over_the_backstop():
+    """Taking the outer frame would scale every result down by the difference."""
+    img = _backdrop()
+    _goal_like(img, 380, 900, 170, 560)          # backstop frame
+    _goal_like(img, 520, 760, 380, 540)          # the goal, inside it
+    quad, _, _ = detect_net_in_frame(img, Config())
+    width = np.linalg.norm(quad[1] - quad[0])
+    assert width == pytest.approx(240, abs=12)
+
+
+def test_flowers_resting_on_a_post_do_not_hide_it():
+    """Red flowers touching a post's top fuse with it into one blob; the post is
+    still the long straight thin run inside it."""
+    from shottracker.net_detect import find_posts
+
+    img = _backdrop()
+    cv2.rectangle(img, (600, 300), (606, 520), MAROON, -1)
+    cv2.circle(img, (625, 285), 30, MAROON, -1)      # shrub resting on its top
+    posts = find_posts(img, Config().net)
+    tall = [p for p in posts if p.height > 150]
+    assert len(tall) == 1
+    assert tall[0].x0 >= 598 and tall[0].x1 <= 608
+
+
+def test_a_goal_that_moves_around_the_frame_is_not_given_one_outline():
+    """Hand-held footage: the goal is found in each frame but in different places.
+    A single outline would be wrong for most of the clip, so none is given."""
+    frames = []
+    for shift in (0, 60, 120, 180, 240, 300, 360, 420):
+        img = _backdrop(seed=shift)
+        _goal_like(img, 300 + shift, 600 + shift, 300, 500)
+        frames.append(img)
+    notes = []
+    assert detect_net(frames, Config(), notes) is None
+    assert any("camera" in n and "moved" in n for n in notes)

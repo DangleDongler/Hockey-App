@@ -158,3 +158,27 @@ def test_the_server_rescores_a_session_instantly(angled_clip):
     bad = client.post(f"/api/jobs/{job_id}/target", data={"target": "glove_side"})
     assert bad.status_code == 400
     client.delete(f"/api/jobs/{job_id}")
+
+
+def test_the_marking_screen_gets_a_suggested_outline(angled_clip):
+    """When no one outline fits a clip, the player marks the net -- but the
+    server can usually still find it in the frame they are looking at."""
+    import sys
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+    import app as server
+
+    client = TestClient(server.app)
+    with open(angled_clip["path"], "rb") as fh:
+        job_id = client.post(
+            "/api/analyze", files={"video": ("clip.mp4", fh, "video/mp4")}, data={"shot_distance_ft": "20"}
+        ).json()["id"]
+
+    s = client.get(f"/api/jobs/{job_id}/suggest-net", params={"frame": 10}).json()
+    assert s["quad"] is not None and len(s["quad"]) == 4
+    truth = np.asarray(angled_clip["net_quad"])
+    assert np.abs(np.asarray(s["quad"]) - truth).max() < 6
+    client.delete(f"/api/jobs/{job_id}")

@@ -80,10 +80,36 @@ class NetDetectConfig:
     # A goal is a frame around a hole.  Anything that fills its own bounding
     # box is a solid red object -- a jacket, a pad, a paint mark -- not a net.
     max_fill: float = 0.45
+
+    # Second method: find the goal by its *shape* -- two thin upright bars on
+    # the ground -- for nets whose pipe is too dark or faded for the colour
+    # method.  The colour band is deliberately loose (shaded maroon pipe sits
+    # around H 150-175 and overlaps skin); thinness is what does the rejecting,
+    # because legs and shrubs are not twelve times taller than they are wide.
+    post_hue_low_max: int = 8
+    post_hue_high_min: int = 150
+    post_sat_min: int = 45
+    post_val_min: int = 25
+    # On the orange side of red live wood, brick and fence stain.  Real goal
+    # pipe there is strongly coloured (sunlit posts measured S~145); stained
+    # fence boards measured S 56-89.  So that side needs real saturation.
+    post_low_hue_sat_min: int = 100
+    post_min_aspect: float = 6.0          # height / width
+    post_max_width_frac: float = 0.04     # of the frame width
+    post_min_height_frac: float = 0.04    # of the frame height
+    # Structural support below this counts as the colour method not having
+    # really found pipe, and the shape method is tried instead.
+    colour_method_trust: float = 0.8
+    # "auto" tries colour and falls back to shape; "colour" or "posts" forces one.
+    method: str = "auto"
     # Frames must agree with the consensus to within this fraction of the
     # quad's diagonal, otherwise they are dropped as outliers.
     consensus_tol_frac: float = 0.06
     min_agreeing_frames: int = 3
+    # Most sampled frames must put the goal in the same place.  A minority
+    # agreeing means the goal moved in the frame -- a hand-held camera -- and a
+    # single outline would be wrong for the rest of the clip.
+    min_agreement_frac: float = 0.5
     # Below this, say nothing rather than something wrong.  A confidently
     # reported outline that is really a flowering shrub poisons every number
     # downstream, so a refusal is the more useful answer.

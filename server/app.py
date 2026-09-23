@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from shottracker.config import CameraConfig, Config
+from shottracker.net_detect import detect_net_in_frame
 from shottracker.pipeline import SessionResult, analyze
 from shottracker.report import shot_chart_svg
 from shottracker.targets import TARGET_CHOICES
@@ -204,6 +205,32 @@ def get_frame(job_id: str, frame: int = 0):
         cap.release()
     return Response(buf.tobytes(), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/jobs/{job_id}/suggest-net")
+def suggest_net(job_id: str, frame: int = 0):
+    """The goal outline in one frame, to pre-fill the marking screen.
+
+    When the camera moved, no single outline fits the whole clip, but the goal
+    can usually still be found in the frame the player is looking at.  This is
+    a suggestion: the player confirms it or drags the corners.
+    """
+    job = _job_or_404(job_id)
+    cap = cv2.VideoCapture(job.video_path)
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(frame, max(total - 1, 0))))
+        ok, img = cap.read()
+    finally:
+        cap.release()
+    if not ok:
+        raise HTTPException(404, "that frame could not be read")
+    cfg = job.cfg or Config()
+    found = detect_net_in_frame(img, cfg)
+    if found is None:
+        return {"quad": None}
+    quad, conf, method = found
+    return {"quad": np.round(quad, 1).tolist(), "confidence": round(float(conf), 3), "method": method}
 
 
 @app.get("/api/jobs/{job_id}/info")

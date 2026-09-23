@@ -165,7 +165,7 @@ Five stages, in `src/shottracker/`:
 
 | Stage | File | What it does |
 | --- | --- | --- |
-| Find the goal | `net_detect.py` | Segments the red pipe in HSV, fits the outer edge of each post and the top of the crossbar with RANSAC, and intersects them for the corners. Repeated over frames sampled across the clip; the median of the frames that agree wins. |
+| Find the goal | `net_detect.py` | Two methods. On bright red pipe: segment it, fit the outer edge of each post and the top of the crossbar, intersect. On dark, faded or washed-out pipe: find it by *shape* — pairs of thin upright bars with level feet, joined by a straight crossbar. Repeated over frames sampled across the clip; most must agree. |
 | Calibrate | `camera.py` | Four corners of a rectangle of known size determine the camera. Solves focal length from the orthonormality of the rotation's columns, then pose — keeping the estimate that survives jittering the corners by the pixel they are known to. |
 | Steady the view | `stabilize.py` | Optional per-frame translation for hand-held clips. Off by default. |
 | Find the puck | `puck_detect.py` | A per-pixel median over the clip is a clean, puck-free plate of the rink. Anything differing from it is a scored candidate. |
@@ -177,6 +177,42 @@ inches with its origin on the ice at the centre of the mouth. A regulation goal
 is 72" × 48" of known geometry, so finding it in the image fixes the scale for
 everything else. Impacts are reported in that frame, which is why they can be
 quoted in inches rather than pixels.
+
+### Finding a goal that isn't bright red
+
+The first method keys on saturated red pipe, which is what a rink goal looks
+like. The first real backyard net broke it: shaded maroon posts (hue ~159–175),
+a crossbar washed out to near-white by sun, and — the real problem — the
+shooter's bare legs at hue 177, squarely in the same band. No colour threshold
+separates those, and it reported a flowering shrub as the goal.
+
+So there is a second method that finds the goal the way a person does, by its
+shape:
+
+- **Posts** are bars many times taller than they are wide. The colour band can
+  afford to be loose, because legs (≈4× taller than wide) and shrubs (≈3×)
+  fail on shape. Thinness is judged row by row along a straight run, so red
+  flowers resting on top of a post don't swallow it.
+- **On the orange side of red**, only strongly coloured pixels count: stained
+  fence boards measured saturation 56–89, sunlit pipe 145.
+- **The crossbar** is found as a straight bar spanning post to post — bright on
+  dark mesh or dark on bright ice, either way — and taken as the *first* such
+  bar going up. The top of a backstop frame above it can be straighter and
+  brighter, which is why "strongest" is the wrong rule. Two upright bars with
+  no bar across them are not reported as a goal.
+- **A goal inside a backstop frame** is taken over the backstop, never the
+  reverse.
+
+On the backyard clip it finds the goal in every frame where a post isn't
+blocked, within ~3 px (2% of the goal's width) of a careful hand measurement.
+On the synthetic goals it works from every camera angle, at 1.6–4.7%. It is
+less precise than the colour method on clean red pipe (0.4–1.4%), which is why
+its confidence is capped lower, and why the colour method goes first.
+
+Most sampled frames must put the goal in the same place. When they don't —
+hand-held footage, where the net wanders around the frame — no single outline
+fits the clip and none is given; the marking screen opens instead, already
+outlined on the frame being looked at, to confirm or nudge.
 
 ### The goal is not a box
 
@@ -259,7 +295,7 @@ server/app.py       upload a clip, poll a job, fetch the result
 web/                the browser app: canvas overlay on the original video, interactive shot chart
   stabilize.py      optional motion compensation (off by default, see below)
   targets.py        scoring shots against what the player was aiming at
-tests/              97 tests, including end-to-end accuracy against ground truth
+tests/              105 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
@@ -277,7 +313,7 @@ honestly, because the reasons are specific and mostly fixable at the camera:
 | Frame rate too low | ~5 frames of flight; puck visible in 1–2 | Slow-motion capture |
 | Dappled sun through leaves | ~320 false candidates per frame | Even light |
 | Hand-held camera | up to 80 px of drift | Propping the phone |
-| Maroon goal pipe | posts at H≈159–175, **overlapping bare skin at H=177** | Marking the net by hand |
+| Maroon goal pipe | posts at H≈159–175, **overlapping bare skin at H=177** | Fixed: found by shape instead of colour |
 | Detection too slow for slow-motion | 4 frames/s → 33 min for a 30 s 240 fps clip | Fixed: now 42 frames/s |
 
 The last one is the interesting failure. Colour thresholding works on a
