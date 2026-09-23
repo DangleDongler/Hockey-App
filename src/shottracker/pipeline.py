@@ -63,8 +63,24 @@ class SessionResult:
     def plane(self) -> GoalPlane | None:
         return None if self.net is None else GoalPlane(self.net.quad, self.config.goal)
 
+    def targeting(self) -> dict | None:
+        from .targets import targeting_block
+
+        return targeting_block(
+            [(s.impact_goal_in[0], s.impact_goal_in[1], s.outcome) for s in self.shots],
+            self.config.goal,
+            self.config.target,
+            self.plane,
+        )
+
     def to_dict(self) -> dict:
         from .report import summarize
+
+        targeting = self.targeting()
+        shots = [s.to_dict() for s in self.shots]
+        if targeting:
+            for sd, score in zip(shots, targeting["per_shot"]):
+                sd["vs_target"] = score
 
         return {
             "video": self.video.to_dict(),
@@ -78,7 +94,8 @@ class SessionResult:
                 if self.camera
                 else None
             ),
-            "shots": [s.to_dict() for s in self.shots],
+            "shots": shots,
+            "targeting": targeting,
             "tracks": [
                 {
                     "shot_index": i,

@@ -59,6 +59,8 @@ $("upload-form").addEventListener("submit", async (e) => {
   body.append("shooter_offset_ft", num("offset") ?? 0);
   if (num("hfov") !== null) body.append("hfov_deg", num("hfov"));
   if (num("fps") !== null) body.append("fps_override", num("fps"));
+  if ($("target").value) body.append("target", $("target").value);
+  if (num("target-radius") !== null) body.append("target_radius_in", num("target-radius"));
   if (num("goal-w") !== null) body.append("goal_width_in", num("goal-w"));
   if (num("goal-h") !== null) body.append("goal_height_in", num("goal-h"));
 
@@ -121,6 +123,7 @@ function render(result) {
   $("results").classList.remove("hidden");
 
   renderStats(result);
+  renderTargeting(result);
   renderTable(result);
   renderNotes(result);
   drawChart();
@@ -154,14 +157,26 @@ function renderStats(r) {
     cards.push({ value: `${Math.round(s.corner_precision.best_distance_in)}"`, label: "best corner",
                  sub: "closest to a corner" });
   }
+  if (r.targeting) {
+    const ts = r.targeting.summary;
+    cards.splice(2, 0, { value: `${ts.hits}/${ts.shots}`, label: "on target",
+                         sub: r.targeting.label });
+  }
+
   // The camera distance follows from the marked net being the size it was said
   // to be. If the wrong rectangle was marked -- a backstop frame rather than
-  // the goal -- this is the number that gives it away.
+  // the goal -- this is the number that gives it away, so it sits with the
+  // footage as a check rather than among the scores.
+  const cam = $("camera-check");
   if (r.camera?.position_in) {
     const ft = r.camera.position_in[2] / 12;
-    cards.push({ value: `${ft.toFixed(0)} ft`, label: "camera distance",
-                 sub: "does this look right?" });
+    cam.textContent = `The camera works out to about ${ft.toFixed(0)} ft from the net. ` +
+      "If that's clearly wrong, the net was marked on the wrong rectangle.";
+    cam.classList.remove("hidden");
+  } else {
+    cam.classList.add("hidden");
   }
+
   $("stats").innerHTML = cards.map((c) => `
     <div>
       <div class="stat-value">${c.value}</div>
@@ -170,6 +185,46 @@ function renderStats(r) {
     </div>`).join("");
 }
 
+function renderTargeting(r) {
+  const t = r.targeting;
+  $("target-live").value = t?.kind ?? "";
+  if (!t) {
+    $("target-verdict").textContent =
+      "Pick a target to see how many shots found it and whether the misses lean one way.";
+    $("target-bias").textContent = "";
+    $("target-bias").className = "target-bias";
+    return;
+  }
+  const s = t.summary;
+  const off = s.mean_distance_in != null ? ` \u00b7 ${Math.round(s.mean_distance_in)}" off on average` : "";
+  $("target-verdict").innerHTML =
+    `<strong>${s.hits}/${s.shots}</strong> on target (${escapeHtml(t.label)}, ${t.radius_in}" radius)${off}`;
+  const bias = s.bias?.description ?? "";
+  $("target-bias").textContent = bias ? bias.charAt(0).toUpperCase() + bias.slice(1) + "." : "";
+  $("target-bias").className = "target-bias" + (s.bias?.significant ? " lean" : "");
+}
+
+// Re-scoring is pure geometry on the impact points, so the server answers
+// instantly and the player can try "what if I'd been aiming top shelf?".
+$("target-live").addEventListener("change", async (e) => {
+  const body = new FormData();
+  body.append("target", e.target.value);
+  const radius = $("target-radius").value.trim();
+  if (radius) body.append("target_radius_in", radius);
+  try {
+    const res = await fetch(`/api/jobs/${state.jobId}/target`, { method: "POST", body });
+    if (!res.ok) throw new Error((await res.json()).detail ?? "could not re-score");
+    const job = await res.json();
+    state.result = job.result;
+    renderStats(job.result);
+    renderTargeting(job.result);
+    renderTable(job.result);
+    drawChart();
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
 function renderTable(r) {
   const rows = r.shots.map((s) => {
     const speed = s.speed
@@ -177,16 +232,22 @@ function renderTable(r) {
       : "–";
     const where = s.zone_label ?? s.miss_detail ?? s.outcome;
     const label = { on_net: "on net", post: "post", miss: "missed" }[s.outcome] ?? s.outcome;
+    const vt = s.vs_target;
+    const aim = !vt ? "" : vt.hit
+      ? `<span class="vs-hit">on target</span>`
+      : `${Math.round(vt.distance_in)}" off <span class="unc">${escapeHtml(vt.target_label)}</span>`;
     return `<tr data-frame="${s.impact_frame}">
       <td>${s.index + 1}</td>
       <td>${speed}</td>
       <td><span class="pill ${s.outcome}">${label}</span></td>
       <td>${where}</td>
+      ${r.targeting ? `<td>${aim}</td>` : ""}
       <td class="unc">${s.impact_goal_in[0] >= 0 ? "+" : ""}${s.impact_goal_in[0].toFixed(0)}", ${s.impact_goal_in[1].toFixed(0)}" up</td>
     </tr>`;
   }).join("");
   $("shot-table").innerHTML =
-    `<thead><tr><th>#</th><th>Speed (mph)</th><th>Result</th><th>Where</th><th>Position</th></tr></thead>
+    `<thead><tr><th>#</th><th>Speed (mph)</th><th>Result</th><th>Where</th>
+       ${r.targeting ? "<th>Vs target</th>" : ""}<th>Position</th></tr></thead>
      <tbody>${rows}</tbody>`;
   $("shot-table").querySelectorAll("tbody tr").forEach((tr) =>
     tr.addEventListener("click", () => seekToFrame(Number(tr.dataset.frame)))
@@ -612,6 +673,19 @@ function drawChart() {
   ctx.stroke();
   ctx.lineCap = "butt";
 
+  // Targets, under the marks so a hit is visibly inside its circle.
+  for (const t of state.result.targeting?.targets ?? []) {
+    ctx.beginPath();
+    ctx.arc(X(t.x_in), Y(t.y_in), t.radius_in * s, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(59,130,246,0.12)";
+    ctx.fill();
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#60a5fa";
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // The marks.
   state.chartHits = [];
   for (const shot of state.result.shots) {
@@ -680,6 +754,14 @@ function drawOverlay() {
     const frame = Math.round((video.currentTime || 0) * fps);
 
     if (r.net?.quad) drawNet(ctx, r, $("show-zones").checked);
+    for (const t of r.targeting?.targets ?? []) {
+      if (!t.image_outline) continue;
+      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(96,165,250,0.9)";
+      poly(ctx, t.image_outline);
+      ctx.setLineDash([]);
+    }
     drawTrails(ctx, r, frame);
     drawImpacts(ctx, r, frame);
   }

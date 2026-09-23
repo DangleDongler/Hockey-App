@@ -45,6 +45,23 @@ Analyze your own footage:
     --chart chart.svg --overlay annotated.mp4 --json result.json
 ```
 
+Say what you were aiming at and every shot is scored against it:
+
+```bash
+.venv/bin/shottracker analyze shots.mp4 --distance 20 --target any_corner
+```
+
+```
+Target    Any Corner (6" radius): 2 of 4 on target, 13" off on average
+          no consistent lean -- the misses scatter rather than drift one way
+
+  #   frame    speed          where
+  1   60       71.3 mph ±4.2 Top Shelf Left   [on target]
+  2   146      53.5 mph ±3.1 Bottom Right Corner   [on target]
+  3   228      46.0 mph ±2.7 Five Hole   [30" off Bottom Right Corner]
+  4   298      60.5 mph ±3.5 missed - 0.7 ft wide right   [20" off Top Shelf Right]
+```
+
 Or run the web app and drag a clip in:
 
 ```bash
@@ -183,6 +200,29 @@ the pipe instead of cutting the corner. `GoalSpec.corner_radius_in` defaults to
 an approximate 4 inches; it only affects that call and the drawing, never the
 scale.
 
+### Aiming
+
+A target is an aim point with a hit radius. The named ones — `top_left`,
+`top_right`, `bottom_left`, `bottom_right`, `five_hole` — sit six inches in
+from the pipe and scale with the goal's real size. The groups — `top_shelf`,
+`any_corner`, `low_corners` — score each shot against whichever member it was
+plainly going for. `--target-at X,Y` sets a custom one in goal inches. The
+default six-inch radius is about the size of the hanging target discs sold for
+backyard nets.
+
+A hit has to go in: a puck that clips the pipe inside the target circle rang
+off, and is not counted.
+
+The useful output is not the hit rate but the **lean**. Scatter is noise; a
+consistent offset — every shot landing four inches under where it was aimed —
+is a habit, and the one thing a shooter can fix between sessions. It is only
+reported when it clears twice its own standard error *and* is at least two
+inches, so nobody gets told they miss low on the strength of two shots.
+
+Scoring only needs the impact points, so a finished session can be re-scored
+against a different target instantly — in the web app, change "Score against"
+on the results page; nothing is re-processed.
+
 ### Speed, and why it is the hard part
 
 A single camera cannot see depth, and a puck flying at a net is mostly moving in
@@ -218,7 +258,8 @@ src/shottracker/    the tracker: config, geometry, camera, detection, tracking, 
 server/app.py       upload a clip, poll a job, fetch the result
 web/                the browser app: canvas overlay on the original video, interactive shot chart
   stabilize.py      optional motion compensation (off by default, see below)
-tests/              71 tests, including end-to-end accuracy against ground truth
+  targets.py        scoring shots against what the player was aiming at
+tests/              97 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
@@ -290,7 +331,9 @@ Still untested on real video, and next in line:
 
 - Calibrate the puck size and blur against real clips to widen the detector's
   size gates without letting sticks in.
-- Aim points: declare a target zone before a session and score against it.
-- Session history and trends — is the grouping tightening, is the release
-  getting quicker.
+- Session history and trends — is the grouping tightening, is the lean going
+  away, is the release getting quicker.
+- Drills with a sequence of targets (top left, then top right, …). Held back
+  for now because a single missed detection would misalign the sequence and
+  score every later shot against the wrong target.
 - On-device capture, so the phone records and analyzes without an upload.

@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "httpx2"]
 
 [project.scripts]
 shottracker = "shottracker.cli:main"

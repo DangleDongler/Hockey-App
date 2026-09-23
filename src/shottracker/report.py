@@ -161,6 +161,15 @@ def shot_chart_svg(result: "SessionResult", *, width_px: int = 900, show_zones: 
             f'{max(10, 0.014*width_px):.0f}" fill="#0f172a">{label}</text>'
         )
 
+    targeting = result.targeting()
+    if targeting:
+        for t in targeting["targets"]:
+            parts.append(
+                f'<circle cx="{X(t["x_in"]):.1f}" cy="{Y(t["y_in"]):.1f}" r="{t["radius_in"]*s:.1f}" '
+                f'fill="#3b82f6" fill-opacity="0.08" stroke="#2563eb" stroke-width="1.5" '
+                f'stroke-dasharray="5 4"/>'
+            )
+
     parts.append("</svg>")
     return "\n".join(parts)
 
@@ -196,6 +205,17 @@ def format_text_report(result: "SessionResult") -> str:
         lines.append(f"Corners   nearest-corner distance: best {c['best_distance_in']:.0f}\", "
                      f"average {c['mean_distance_in']:.0f}\"")
 
+    targeting = result.targeting()
+    if targeting:
+        ts = targeting["summary"]
+        lines.append(
+            f"Target    {targeting['label']} ({targeting['radius_in']:.0f}\" radius): "
+            f"{ts['hits']} of {ts['shots']} on target"
+            + (f", {ts['mean_distance_in']:.0f}\" off on average" if ts.get("mean_distance_in") is not None else "")
+        )
+        if ts.get("bias", {}).get("description"):
+            lines.append(f"          {ts['bias']['description']}")
+
     if result.shots:
         lines.append("")
         lines.append("  #   frame    speed          where")
@@ -210,6 +230,9 @@ def format_text_report(result: "SessionResult") -> str:
                 where = f"POST ({shot.miss_detail})"
             elif shot.outcome == "miss":
                 where = f"missed - {shot.miss_detail}"
+            if targeting and targeting["per_shot"][shot.index]:
+                vt = targeting["per_shot"][shot.index]
+                where += "   [on target]" if vt["hit"] else f'   [{vt["distance_in"]:.0f}" off {vt["target_label"]}]'
             lines.append(f"  {shot.index+1:<3} {shot.impact_frame:<7} {sp:<14} {where}")
 
     if result.warnings:

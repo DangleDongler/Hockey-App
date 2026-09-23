@@ -73,7 +73,8 @@ button.secondary { background: transparent; color: var(--accent); border: 1px so
 .error { color: var(--miss); background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.35);
          padding: .75rem 1rem; border-radius: 10px; margin-top: 1rem; }
 
-.stats { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); text-align: center; }
+.stats { display: grid; gap: 1rem; grid-template-columns: repeat(2, 1fr); text-align: center; }
+@media (min-width: 700px) { .stats { grid-template-columns: repeat(4, 1fr); } }
 .stat-value { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; }
 .stat-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
 .stat-sub { font-size: .75rem; color: var(--muted); }
@@ -137,5 +138,18 @@ td .pill { font-size: .72rem; padding: .15rem .5rem; border-radius: 99px; font-w
 .scrub { display: flex; align-items: center; gap: .8rem; color: var(--muted); font-size: .85rem; }
 .scrub input { flex: 1; }
 .mark-buttons { display: grid; gap: .7rem; grid-template-columns: 1fr 2fr; }
+
+select {
+  width: 100%; padding: .6rem .7rem; border-radius: 8px; font-size: 1rem;
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+}
+.target-row { display: grid; gap: 1rem; grid-template-columns: 1fr; align-items: end; }
+@media (min-width: 700px) { .target-row { grid-template-columns: 280px 1fr; } }
+.target-switch span { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .35rem; }
+.target-verdict { margin: 0; font-size: 1.05rem; }
+.target-verdict strong { font-size: 1.5rem; margin-right: .35rem; }
+.target-bias { margin: .9rem 0 0; color: var(--muted); }
+.target-bias.lean { color: var(--post); }
+.vs-hit { color: var(--on-net); font-weight: 600; }
 
 .hidden { display: none !important; }

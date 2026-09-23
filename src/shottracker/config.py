@@ -229,6 +229,26 @@ class ShotConfig:
 
 
 @dataclass
+class TargetConfig:
+    """What the player is aiming at, if anything.
+
+    ``kind`` is a named target (top_left, top_right, bottom_left,
+    bottom_right, five_hole), a group scored against whichever member each
+    shot was nearest (top_shelf, any_corner, low_corners), or "custom" with an
+    aim point in goal inches.
+    """
+
+    kind: str | None = None
+    # Hit radius around the aim point.  Six inches is roughly the size of the
+    # hanging target discs sold for backyard nets.
+    radius_in: float = 6.0
+    # How far in from the pipe (and the ice) the named targets sit.
+    inset_in: float = 6.0
+    x_in: float | None = None
+    y_in: float | None = None
+
+
+@dataclass
 class Config:
     goal: GoalSpec = field(default_factory=GoalSpec)
     camera: CameraConfig = field(default_factory=CameraConfig)
@@ -237,6 +257,7 @@ class Config:
     track: TrackingConfig = field(default_factory=TrackingConfig)
     speed: SpeedConfig = field(default_factory=SpeedConfig)
     shot: ShotConfig = field(default_factory=ShotConfig)
+    target: TargetConfig = field(default_factory=TargetConfig)
 
     # Override the container's frame rate.  Phone slow-motion clips frequently
     # lie about this, and every speed scales linearly with it.

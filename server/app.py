@@ -24,8 +24,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from shottracker.config import CameraConfig, Config
-from shottracker.pipeline import analyze
+from shottracker.pipeline import SessionResult, analyze
 from shottracker.report import shot_chart_svg
+from shottracker.targets import TARGET_CHOICES
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 DATA_DIR = Path(os.environ.get("SHOTTRACKER_DATA", Path(tempfile.gettempdir()) / "shottracker-data"))
@@ -41,6 +42,7 @@ class Job:
     video_path: str
     cfg: Config | None = None       # kept so the clip can be re-run with a marked net
     net_quad: list[list[float]] | None = None
+    session: SessionResult | None = None   # kept so targets can be re-scored without the video
     status: str = "queued"        # queued | running | done | error
     stage: str = "queued"
     progress: float = 0.0
@@ -82,6 +84,7 @@ def _run_job(job_id: str, cfg: Config) -> None:
     quad = np.asarray(job.net_quad, dtype=float) if job.net_quad else None
     try:
         result = analyze(job.video_path, cfg, net_quad=quad, progress=progress)
+        job.session = result
         job.result = result.to_dict()
         job.chart_svg = shot_chart_svg(result)
         job.status, job.stage, job.progress = "done", "done", 1.0
@@ -100,6 +103,8 @@ async def create_job(
     fps_override: float | None = Form(None),
     goal_width_in: float | None = Form(None),
     goal_height_in: float | None = Form(None),
+    target: str | None = Form(None),
+    target_radius_in: float | None = Form(None),
 ):
     suffix = Path(video.filename or "clip.mp4").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -134,12 +139,26 @@ async def create_job(
         cfg.goal.mouth_width_in = goal_width_in
     if goal_height_in:
         cfg.goal.mouth_height_in = goal_height_in
+    _apply_target(cfg, target, target_radius_in)
 
     job = Job(id=job_id, video_path=str(dest))
     with JOBS_LOCK:
         JOBS[job_id] = job
     background.add_task(asyncio.to_thread, _run_job, job_id, cfg)
     return JSONResponse({"id": job_id}, status_code=202)
+
+
+def _apply_target(cfg: Config, target: str | None, radius: float | None) -> None:
+    if target in (None, "", "none"):
+        cfg.target.kind = None
+    elif target in TARGET_CHOICES and target != "custom":
+        cfg.target.kind = target
+    else:
+        raise HTTPException(400, f"unknown target {target!r}")
+    if radius:
+        if not (1.0 <= radius <= 36.0):
+            raise HTTPException(400, "target radius should be between 1 and 36 inches")
+        cfg.target.radius_in = radius
 
 
 def _job_or_404(job_id: str) -> Job:
@@ -225,6 +244,22 @@ def reanalyze(job_id: str, background: BackgroundTasks, net_quad: str = Form(...
     job.status, job.stage, job.progress, job.result = "queued", "queued", 0.0, None
     background.add_task(asyncio.to_thread, _run_job, job_id, job.cfg or Config())
     return JSONResponse({"id": job.id}, status_code=202)
+
+
+@app.post("/api/jobs/{job_id}/target")
+def retarget(job_id: str, target: str | None = Form(None), target_radius_in: float | None = Form(None)):
+    """Score a finished session against a different target.
+
+    Scoring only needs the impact points, so this is instant -- the player can
+    ask "and how would I have done aiming top shelf?" without a re-run.
+    """
+    job = _job_or_404(job_id)
+    if job.session is None:
+        raise HTTPException(409, "the analysis has not finished yet")
+    _apply_target(job.session.config, target, target_radius_in)
+    job.result = job.session.to_dict()
+    job.chart_svg = shot_chart_svg(job.session)
+    return job.public()
 
 
 @app.get("/api/jobs/{job_id}/video")

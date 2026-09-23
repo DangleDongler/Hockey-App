@@ -12,6 +12,7 @@ import numpy as np
 from .config import CameraConfig, Config
 from .pipeline import analyze
 from .report import format_text_report, shot_chart_svg
+from .targets import TARGET_CHOICES
 
 
 def _parse_quad(text: str) -> np.ndarray:
@@ -33,7 +34,22 @@ def _build_config(args) -> Config:
         cfg.speed.method = args.speed_method
     if getattr(args, "hfov", None):
         cfg.camera.assumed_focal_frac = CameraConfig.frac_from_hfov(args.hfov)
+    if getattr(args, "target", None):
+        cfg.target.kind = args.target
+    if getattr(args, "target_at", None):
+        cfg.target.kind = "custom"
+        cfg.target.x_in, cfg.target.y_in = args.target_at
+    if getattr(args, "target_radius", None):
+        cfg.target.radius_in = args.target_radius
     return cfg
+
+
+def _parse_point(text: str) -> tuple[float, float]:
+    try:
+        x, y = (float(v) for v in text.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError("--target-at needs X,Y in inches, e.g. -30,42")
+    return x, y
 
 
 def cmd_analyze(args) -> int:
@@ -142,6 +158,15 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--hfov", type=float, metavar="DEG",
                    help="your camera's horizontal field of view in degrees. Only used when the "
                         "view is too square-on for the goal to reveal it; phones are 60-70.")
+    a.add_argument("--target", choices=TARGET_CHOICES,
+                   help="what the player was aiming at; each shot is scored against it. "
+                        "Groups (top_shelf, any_corner, low_corners) score each shot against "
+                        "whichever member it was nearest.")
+    a.add_argument("--target-at", type=_parse_point, metavar="X,Y",
+                   help="a custom aim point in goal inches: x from net centre (right is +), "
+                        "y up from the ice")
+    a.add_argument("--target-radius", type=float, metavar="IN",
+                   help="hit radius around the aim point, in inches (default 6)")
     a.add_argument("--net", type=_parse_quad, metavar="X1,Y1,...",
                    help="skip net detection and use these four corners (top-left, top-right, "
                         "bottom-right, bottom-left) of the outer pipe")
