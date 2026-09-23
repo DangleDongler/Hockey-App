@@ -16,10 +16,12 @@ GOAL_MOUTH_WIDTH_IN = 72.0   # 6 ft between the inside edges of the posts
 GOAL_MOUTH_HEIGHT_IN = 48.0  # 4 ft from the ice to the underside of the crossbar
 POST_DIAMETER_IN = 2.375     # 2 3/8" goal pipe
 # Posts and crossbar are joined by a bend, not a mitre, so the mouth's top
-# corners are rounded.  Approximate: it varies between makes, and it is only
-# used for drawing and for calling corner hits -- the scale comes from where
-# the straight sections of pipe would meet, which the radius does not move.
-CORNER_RADIUS_IN = 4.0
+# corners are rounded.  This is the inside of the bend, measured at 5.8" and
+# 6.4" on the two top corners of a Bauer steel goal from a square-on photo
+# flattened onto the goal plane.  It varies between makes, and it is only used
+# for drawing and for calling corner hits -- the scale comes from where the
+# straight sections of pipe would meet, which the radius does not move.
+CORNER_RADIUS_IN = 6.0
 PUCK_DIAMETER_IN = 3.0
 PUCK_THICKNESS_IN = 1.0
 

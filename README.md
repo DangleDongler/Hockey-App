@@ -233,8 +233,11 @@ recovers the true intersection to within 0.8% of the goal's width.
 The bend is modelled rather than ignored: shots arriving in it are reported as
 "left corner bend" rather than counted as goals, and the drawn outline follows
 the pipe instead of cutting the corner. `GoalSpec.corner_radius_in` defaults to
-an approximate 4 inches; it only affects that call and the drawing, never the
-scale.
+6 inches, measured on the inside of both top bends of a Bauer steel goal (5.8"
+and 6.4") from a square-on photo flattened onto the goal plane. The same photo
+confirmed the 2⅜" pipe: the posts measure 2.39" against the 72" mouth. Other
+makes may differ; the radius only affects the corner call and the drawing,
+never the scale.
 
 ### Aiming
 
