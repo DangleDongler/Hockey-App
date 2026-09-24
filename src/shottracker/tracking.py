@@ -11,6 +11,7 @@ A knee, a stick blade and a shadow all fail at least one of those.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -133,11 +134,37 @@ def _velocity(track: Track, direction: int = +1, lookback: int = 4) -> np.ndarra
     away from the camera slows down on screen by several fold -- so extending
     backwards has to use the velocity at the *start* of the track, not the end.
     """
-    pts = track.points[-lookback:] if direction > 0 else track.points[:lookback]
-    frs = track.frames[-lookback:] if direction > 0 else track.frames[:lookback]
-    if len(pts) < 2:
+    cs = track.candidates[-lookback:] if direction > 0 else track.candidates[:lookback]
+    if len(cs) < 2:
         return np.zeros(2)
-    return (pts[-1] - pts[0]) / max(frs[-1] - frs[0], 1.0)
+    a, b = cs[0], cs[-1]
+    return np.array([b.x - a.x, b.y - a.y]) / max(b.frame - a.frame, 1.0)
+
+
+def _seed_pairs(
+    xy: dict[int, np.ndarray], score: dict[int, np.ndarray], max_gap: int, max_step: float
+) -> np.ndarray:
+    """Every plausible pairing of detections a few frames apart, best first.
+
+    Rows are (frame1, index1, frame2, index2).  Ties in score fall back to
+    frame and index order, so the result never depends on dict ordering.
+    """
+    rows: list[np.ndarray] = []
+    for f in sorted(xy):
+        for gap_i in range(1, max_gap + 1):
+            f2 = f + gap_i
+            if f2 not in xy:
+                continue
+            d = np.hypot(xy[f2][None, :, 0] - xy[f][:, None, 0], xy[f2][None, :, 1] - xy[f][:, None, 1]) / gap_i
+            i, j = np.nonzero((d <= max_step) & (d >= 1e-3))
+            if len(i):
+                s = -(score[f][i] + score[f2][j]) / 2.0
+                rows.append(np.column_stack([s, np.full(len(i), f), i, np.full(len(i), f2), j]))
+    if not rows:
+        return np.zeros((0, 4), dtype=np.int64)
+    allr = np.concatenate(rows)
+    order = np.lexsort((allr[:, 4], allr[:, 3], allr[:, 2], allr[:, 1], allr[:, 0]))
+    return allr[order, 1:].astype(np.int64)
 
 
 def build_tracks(
@@ -153,6 +180,10 @@ def build_tracks(
     as the number of candidates per frame stays small.  When the foreground
     model fails, every frame fills with candidates and the seed set grows with
     their square, so it is capped.
+
+    Seed pairs are found with array arithmetic, since there can be a million of
+    them; continuing a track looks at a dozen detections, where plain Python
+    is quicker.
     """
     notes = notes if notes is not None else []
     tcfg = cfg.track
@@ -162,25 +193,12 @@ def build_tracks(
     gate_base = tcfg.gate_base_frac * gw
     gate_vel = tcfg.gate_vel_frac
 
-    frames = sorted(cands_by_frame)
-    index = {f: cands_by_frame[f] for f in frames}
-    claimed: set[tuple[int, int]] = set()
-    tried_seeds: set[tuple[int, int, int, int]] = set()
+    index = {f: cands_by_frame[f] for f in sorted(cands_by_frame) if cands_by_frame[f]}
+    xy = {f: np.array([[c.x, c.y] for c in cs], dtype=np.float64) for f, cs in index.items()}
+    score = {f: np.array([c.score for c in cs], dtype=np.float64) for f, cs in index.items()}
+    claimed = {f: [False] * len(cs) for f, cs in index.items()}
 
-    # Build seed pairs and try the most promising first.
-    seeds: list[tuple[float, int, int, int, int]] = []
-    for fi, f in enumerate(frames):
-        for gap_i in range(1, max_gap + 1):
-            f2 = f + gap_i
-            if f2 not in index:
-                continue
-            for i, c1 in enumerate(index[f]):
-                for j, c2 in enumerate(index[f2]):
-                    step = np.hypot(c2.x - c1.x, c2.y - c1.y) / gap_i
-                    if step > max_step or step < 1e-3:
-                        continue
-                    seeds.append((-(c1.score + c2.score) / 2.0, f, i, f2, j))
-    seeds.sort()
+    seeds = _seed_pairs(xy, score, max_gap, max_step)
     if len(seeds) > tcfg.max_seeds:
         notes.append(
             f"{len(seeds):,} possible puck pairings were found, far more than a clean clip "
@@ -189,67 +207,72 @@ def build_tracks(
         )
         seeds = seeds[: tcfg.max_seeds]
 
+    # Plain floats: a frame holds a dozen detections at most, and at that size
+    # Python arithmetic beats numpy's per-call overhead several times over.
+    rows = {f: [(c.x, c.y, c.score) for c in cs] for f, cs in index.items()}
+
     def find_next(track: Track, direction: int) -> tuple[int, int] | None:
         """Best unclaimed candidate continuing the track forward/backward."""
-        v = _velocity(track, direction) * direction
-        anchor_pt = track.points[-1] if direction > 0 else track.points[0]
-        anchor_f = track.end_frame if direction > 0 else track.start_frame
-        best = None
-        best_cost = np.inf
+        # Velocity at the end being extended (see _velocity), pointed the way
+        # the search is going: backwards in time when extending the start.
+        cs = track.candidates[-4:] if direction > 0 else track.candidates[:4]
+        a, b = cs[0], cs[-1]
+        dt = max(b.frame - a.frame, 1.0)
+        vx, vy = direction * (b.x - a.x) / dt, direction * (b.y - a.y) / dt
+        if len(cs) < 2:
+            vx = vy = 0.0
+        anchor = track.candidates[-1] if direction > 0 else track.candidates[0]
+        speed = math.hypot(vx, vy)
         for gap_i in range(1, max_gap + 1):
-            f = anchor_f + direction * gap_i
-            if f not in index:
+            f = anchor.frame + direction * gap_i
+            row = rows.get(f)
+            if row is None:
                 continue
-            predicted = anchor_pt + v * gap_i
-            gate = gate_base + gate_vel * np.linalg.norm(v) * gap_i
-            for k, c in enumerate(index[f]):
-                if (f, k) in claimed:
+            gate = gate_base + gate_vel * speed * gap_i
+            px, py = anchor.x + vx * gap_i, anchor.y + vy * gap_i
+            taken = claimed[f]
+            best, best_cost = -1, math.inf
+            for k, (x, y, sc) in enumerate(row):
+                if taken[k]:
                     continue
-                d = float(np.hypot(c.x - predicted[0], c.y - predicted[1]))
+                d = math.hypot(x - px, y - py)
                 if d > gate:
                     continue
-                cost = d / max(gate, 1e-6) - 0.3 * c.score + 0.12 * (gap_i - 1)
+                cost = d / max(gate, 1e-6) - 0.3 * sc + 0.12 * (gap_i - 1)
                 if cost < best_cost:
-                    best_cost, best = cost, (f, k)
-            if best is not None:
-                break  # prefer the nearest frame that offers anything
-        return best
+                    best_cost, best = cost, k
+            if best >= 0:
+                return f, best  # prefer the nearest frame that offers anything
+        return None
 
     tracks: list[Track] = []
-    for _, f1, i1, f2, i2 in seeds:
-        key = (f1, i1, f2, i2)
-        if key in tried_seeds:
-            continue
-        tried_seeds.add(key)
-        if (f1, i1) in claimed or (f2, i2) in claimed:
+    for f1, i1, f2, i2 in seeds.tolist():
+        if claimed[f1][i1] or claimed[f2][i2]:
             continue
 
         track = Track([index[f1][i1], index[f2][i2]])
         newly: list[tuple[int, int]] = [(f1, i1), (f2, i2)]
-        for c in newly:
-            claimed.add(c)
+        claimed[f1][i1] = claimed[f2][i2] = True
 
-        while True:
-            nxt = find_next(track, +1)
-            if nxt is None:
-                break
-            track.candidates.append(index[nxt[0]][nxt[1]])
-            claimed.add(nxt)
-            newly.append(nxt)
-        while True:
-            nxt = find_next(track, -1)
-            if nxt is None:
-                break
-            track.candidates.insert(0, index[nxt[0]][nxt[1]])
-            claimed.add(nxt)
-            newly.append(nxt)
+        for direction in (+1, -1):
+            while True:
+                nxt = find_next(track, direction)
+                if nxt is None:
+                    break
+                c = index[nxt[0]][nxt[1]]
+                if direction > 0:
+                    track.candidates.append(c)
+                else:
+                    track.candidates.insert(0, c)
+                claimed[nxt[0]][nxt[1]] = True
+                newly.append(nxt)
 
-        if _accept(track, gw, cfg):
-            tracks.append(track)
-        else:
+        if not _accept(track, gw, cfg):
             # Put the detections back so a better seed can use them.
-            for c in newly:
-                claimed.discard(c)
+            for f, k in newly:
+                claimed[f][k] = False
+        else:
+            tracks.append(track)
 
     tracks.sort(key=lambda t: t.start_frame)
     return tracks

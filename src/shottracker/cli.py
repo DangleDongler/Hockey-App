@@ -11,7 +11,8 @@ import numpy as np
 
 from .config import CameraConfig, Config
 from .pipeline import analyze
-from .report import format_text_report, shot_chart_svg
+from .report import format_session_report, format_text_report, shot_chart_svg
+from .session import ShotSession
 from .targets import TARGET_CHOICES
 
 
@@ -54,32 +55,46 @@ def _parse_point(text: str) -> tuple[float, float]:
 
 def cmd_analyze(args) -> int:
     cfg = _build_config(args)
+    videos = list(args.video)
+    if args.net is not None and len(videos) > 1:
+        print("--net describes one clip's view; give it with a single video", file=sys.stderr)
+        return 2
 
-    def progress(stage: str, frac: float) -> None:
-        if not args.quiet:
-            print(f"\r  {stage:<22} {frac*100:5.1f}%", end="", file=sys.stderr, flush=True)
+    named = []
+    for i, path in enumerate(videos):
+        def progress(stage: str, frac: float, i=i) -> None:
+            if not args.quiet:
+                where = f"[{i + 1}/{len(videos)}] " if len(videos) > 1 else ""
+                print(f"\r  {where}{stage:<22} {frac*100:5.1f}%", end="", file=sys.stderr, flush=True)
 
-    result = analyze(args.video, cfg, net_quad=args.net, progress=None if args.quiet else progress)
+        # One Config for every clip: they share the goal and the target.
+        result = analyze(path, cfg, net_quad=args.net, progress=None if args.quiet else progress)
+        named.append((os.path.basename(path), result))
     if not args.quiet:
-        print("\r" + " " * 40 + "\r", end="", file=sys.stderr)
+        print("\r" + " " * 50 + "\r", end="", file=sys.stderr)
 
-    print(format_text_report(result))
+    session = ShotSession.from_results(named, cfg)
+    print(format_session_report(session))
 
+    single = named[0][1] if len(named) == 1 else None
     if args.json:
         with open(args.json, "w") as fh:
-            json.dump(result.to_dict(), fh, indent=2)
+            json.dump(single.to_dict() if single else session.to_dict(), fh, indent=2)
         print(f"\nwrote {args.json}")
     if args.chart:
         with open(args.chart, "w") as fh:
-            fh.write(shot_chart_svg(result))
+            fh.write(shot_chart_svg(session))
         print(f"wrote {args.chart}")
     if args.overlay:
         from .overlay import render_overlay
 
-        render_overlay(result, args.overlay, cfg=cfg)
-        print(f"wrote {args.overlay}")
+        stem, ext = os.path.splitext(args.overlay)
+        for i, (_, result) in enumerate(named):
+            out = args.overlay if single else f"{stem}-{i + 1}{ext or '.mp4'}"
+            render_overlay(result, out, cfg=cfg)
+            print(f"wrote {out}")
 
-    return 0 if result.net is not None else 2
+    return 0 if all(r.net is not None for _, r in named) else 2
 
 
 def cmd_demo(args) -> int:
@@ -144,8 +159,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    a = sub.add_parser("analyze", help="analyze a video of someone shooting")
-    a.add_argument("video")
+    a = sub.add_parser("analyze", help="analyze one or more videos of someone shooting")
+    a.add_argument("video", nargs="+",
+                   help="one clip, or several of the same goal to read as one session "
+                        "(slow motion often comes one shot per clip)")
     a.add_argument("--distance", type=float, metavar="FT",
                    help="distance from the shooting spot to the goal line, in feet. "
                         "The single number that most improves speed accuracy.")

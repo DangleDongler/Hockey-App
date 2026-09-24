@@ -237,8 +237,14 @@ def probe(path: str, cfg: Config) -> VideoInfo:
     return info
 
 
+# Seeking in phone video decodes forward from the last keyframe -- a quarter
+# of a second a seek for 1080p HEVC -- so when the wanted frames are this close
+# together it is cheaper to decode straight through and keep the ones needed.
+SEQUENTIAL_SAMPLE_STRIDE = 48
+
+
 def sample_frames(path: str, n: int, total: int) -> list[np.ndarray]:
-    """Evenly spaced frames, read by seeking so long clips stay cheap."""
+    """Evenly spaced frames: read straight through a short clip, seek in a long one."""
     cap = cv2.VideoCapture(path)
     frames: list[np.ndarray] = []
     try:
@@ -249,7 +255,21 @@ def sample_frames(path: str, n: int, total: int) -> list[np.ndarray]:
                     break
                 frames.append(f)
             return frames
-        for idx in np.linspace(0, max(total - 1, 0), min(n, max(total, 1))).astype(int):
+        wanted = np.linspace(0, max(total - 1, 0), min(n, max(total, 1))).astype(int)
+        if total / max(len(wanted), 1) <= SEQUENTIAL_SAMPLE_STRIDE:
+            keep = set(int(i) for i in wanted)
+            last = int(wanted[-1])
+            idx = 0
+            while idx <= last:
+                if not cap.grab():
+                    break
+                if idx in keep:
+                    ok, f = cap.retrieve()
+                    if ok:
+                        frames.append(f)
+                idx += 1
+            return frames
+        for idx in wanted:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
             ok, f = cap.read()
             if ok:

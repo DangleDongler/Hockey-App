@@ -174,9 +174,8 @@ def shot_chart_svg(result: "SessionResult", *, width_px: int = 900, show_zones: 
     return "\n".join(parts)
 
 
-def format_text_report(result: "SessionResult") -> str:
-    """Human-readable summary for the terminal."""
-    s = summarize(result)
+def _clip_lines(result: "SessionResult") -> list[str]:
+    """What the clip was and what was found in it: rate, net, camera."""
     lines: list[str] = []
     v = result.video
     rate = (f"{v.fps:.0f} fps (slow motion, plays at {v.playback_fps:.0f})" if v.playback_fps
@@ -191,8 +190,18 @@ def format_text_report(result: "SessionResult") -> str:
         p = result.camera.position
         lines.append(f"Camera    {p[2]/12:.1f} ft out, {p[0]/12:+.1f} ft across, {p[1]/12:.1f} ft up "
                      f"(reprojection {result.camera.residual_px:.2f} px)")
+    return lines
 
-    lines.append("")
+
+def _results_lines(result, clip_of: list[int] | None = None) -> list[str]:
+    """Statistics, the target score and the shot table.
+
+    ``result`` is anything with ``shots``, ``config`` and ``targeting()``: one
+    clip, or a whole session.  ``clip_of`` gives each shot's clip number, for
+    a session made of several.
+    """
+    s = summarize(result)
+    lines: list[str] = []
     lines.append(f"Shots     {s['shots']}   on net {s['on_net']}   posts {s['posts']}   missed {s['misses']}")
     if s["accuracy_pct"] is not None:
         lines.append(f"Accuracy  {s['accuracy_pct']:.0f}% on net")
@@ -218,10 +227,11 @@ def format_text_report(result: "SessionResult") -> str:
         if ts.get("bias", {}).get("description"):
             lines.append(f"          {ts['bias']['description']}")
 
-    if result.shots:
+    shots = result.shots
+    if shots:
         lines.append("")
-        lines.append("  #   frame    speed          where")
-        for shot in result.shots:
+        lines.append("  #   " + ("clip " if clip_of else "") + "frame    speed          where")
+        for i, shot in enumerate(shots):
             sp = "-"
             if shot.speed:
                 sp = f"{shot.speed.mph:5.1f} mph"
@@ -232,14 +242,35 @@ def format_text_report(result: "SessionResult") -> str:
                 where = f"POST ({shot.miss_detail})"
             elif shot.outcome == "miss":
                 where = f"missed - {shot.miss_detail}"
-            if targeting and targeting["per_shot"][shot.index]:
-                vt = targeting["per_shot"][shot.index]
+            if targeting and targeting["per_shot"][i]:
+                vt = targeting["per_shot"][i]
                 where += "   [on target]" if vt["hit"] else f'   [{vt["distance_in"]:.0f}" off {vt["target_label"]}]'
-            lines.append(f"  {shot.index+1:<3} {shot.impact_frame:<7} {sp:<14} {where}")
+            clip = f"{clip_of[i] + 1:<5}" if clip_of else ""
+            lines.append(f"  {i+1:<3} {clip}{shot.impact_frame:<7} {sp:<14} {where}")
+    return lines
 
-    if result.warnings:
-        lines.append("")
-        lines.append("Notes")
-        for w in result.warnings:
-            lines.append(f"  - {w}")
+
+def _notes_lines(warnings: list[str]) -> list[str]:
+    if not warnings:
+        return []
+    return ["", "Notes"] + [f"  - {w}" for w in warnings]
+
+
+def format_text_report(result: "SessionResult") -> str:
+    """Human-readable summary for the terminal."""
+    lines = _clip_lines(result) + [""] + _results_lines(result) + _notes_lines(result.warnings)
+    return "\n".join(lines)
+
+
+def format_session_report(session) -> str:
+    """The same, for several clips read as one session."""
+    if len(session.clips) == 1:
+        return format_text_report(session.clips[0].result)
+    lines: list[str] = []
+    for i, clip in enumerate(session.clips):
+        lines.append(f"[{i + 1}] {clip.name}")
+        lines.extend("    " + ln for ln in _clip_lines(clip.result))
+    lines.append("")
+    lines.extend(_results_lines(session, clip_of=[ci for ci, _ in session.placed]))
+    lines.extend(_notes_lines(session.warnings))
     return "\n".join(lines)
