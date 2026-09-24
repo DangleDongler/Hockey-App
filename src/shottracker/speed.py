@@ -48,6 +48,9 @@ class SpeedEstimate:
     uncertainty_mph: float | None = None
     notes: list[str] = field(default_factory=list)
     alternatives: dict[str, float] = field(default_factory=dict)
+    # Estimators whose answer was physically impossible and so set aside.  Kept
+    # for diagnosis; it says nothing about the speed that was reported.
+    rejected: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -57,6 +60,7 @@ class SpeedEstimate:
             "uncertainty_mph": None if self.uncertainty_mph is None else round(float(self.uncertainty_mph), 1),
             "notes": list(self.notes),
             "alternatives_mph": {k: round(float(v), 1) for k, v in self.alternatives.items()},
+            "rejected_mph": {k: round(float(v), 1) for k, v in self.rejected.items()},
         }
 
 
@@ -297,10 +301,9 @@ def estimate_speed(
     ]
     usable = [r for r in results if r not in absurd]
     if usable:
-        for r in absurd:
-            usable_note = f"{r.method} returned {r.mph:.0f} mph, which is not a physical result; ignored"
-            usable[0].notes.append(usable_note)
         results = usable
+    else:
+        absurd = []
 
     wanted = cfg.speed.method
     chosen = None
@@ -313,6 +316,7 @@ def estimate_speed(
         chosen = max(results, key=lambda r: r.confidence)
 
     chosen.alternatives = {r.method: r.mph for r in results if r is not chosen}
+    chosen.rejected = {r.method: r.mph for r in absurd}
 
     scfg = cfg.speed
     if not (scfg.plausible_min_mph <= chosen.mph <= scfg.plausible_max_mph):

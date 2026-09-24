@@ -11,10 +11,28 @@ const POLL_MS = 700;
 
 const state = {
   jobId: null,
-  result: null,
+  result: null,    // the whole session: every clip's shots pooled
+  clip: 0,         // which clip's footage is showing
   chartHits: [],   // click targets on the shot chart
-  mark: { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false },
+  mark: { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false, clip: 0 },
 };
+
+// The footage panel shows one clip at a time; everything else is the session.
+const clipR = () => state.result?.clips?.[state.clip] ?? state.result;
+// Clip endpoints take the clip's place in the upload, which differs from its
+// place in the session once a clip has been left out.
+const uploadIndex = (i = state.clip) => state.result?.clips?.[i]?.upload_index ?? i;
+// Shots are numbered through the session, not within each clip.
+function sessionNo(clip, localIndex) {
+  const s = state.result?.shots?.find((x) => (x.clip ?? 0) === clip && (x.clip_shot ?? x.index) === localIndex);
+  return s ? s.index + 1 : localIndex + 1;
+}
+
+function describeFiles(files) {
+  const list = [...files];
+  if (list.length <= 1) return list[0]?.name ?? "";
+  return `${list.length} clips: ${list.map((f) => f.name).join(", ")}`;
+}
 
 /* ---------------------------------------------------------------- upload */
 
@@ -22,7 +40,7 @@ const fileInput = $("video-input");
 const fileDrop = $("file-drop");
 
 fileInput.addEventListener("change", () => {
-  $("file-name").textContent = fileInput.files[0]?.name ?? "";
+  $("file-name").textContent = describeFiles(fileInput.files);
 });
 
 ["dragenter", "dragover"].forEach((ev) =>
@@ -32,25 +50,24 @@ fileInput.addEventListener("change", () => {
   fileDrop.addEventListener(ev, (e) => { e.preventDefault(); fileDrop.classList.remove("drag"); })
 );
 fileDrop.addEventListener("drop", (e) => {
-  const file = e.dataTransfer.files[0];
-  if (file) {
+  if (e.dataTransfer.files.length) {
     fileInput.files = e.dataTransfer.files;
-    $("file-name").textContent = file.name;
+    $("file-name").textContent = describeFiles(fileInput.files);
   }
 });
 
 $("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const file = fileInput.files[0];
-  if (!file) return;
+  const files = [...fileInput.files];
+  if (!files.length) return;
 
   showError(null);
   $("submit-btn").disabled = true;
   $("progress").classList.remove("hidden");
-  setProgress("Uploading", 0.02);
+  setProgress(files.length > 1 ? `Uploading ${files.length} clips` : "Uploading", 0.02);
 
   const body = new FormData();
-  body.append("video", file);
+  for (const f of files) body.append("videos", f);
   const num = (id) => {
     const v = $(id).value.trim();
     return v === "" ? null : Number(v);
@@ -79,7 +96,8 @@ $("upload-form").addEventListener("submit", async (e) => {
 $("again").addEventListener("click", () => {
   $("results").classList.add("hidden");
   $("mark-panel").classList.add("hidden");
-  state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false };
+  state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false, clip: 0 };
+  state.clip = 0;
   $("upload-panel").classList.remove("hidden");
   $("submit-btn").disabled = false;
   $("progress").classList.add("hidden");
@@ -91,8 +109,11 @@ async function poll() {
     setProgress(job.stage, job.progress);
     if (job.status === "done") {
       // No outline means every downstream number is unavailable, so offer the
-      // one thing that always works: let the player point at the net.
-      if (!job.result.net) return offerManualMarking(job.result);
+      // one thing that always works: let the player point at the net -- one
+      // clip at a time, for each clip where it could not be found.
+      const pending = (job.clips ?? []).findIndex((c) => !c.has_net && !c.skipped);
+      if (pending >= 0) return offerManualMarking(pending, job);
+      if (!job.result) throw new Error("Every clip was left out, so there is nothing to show.");
       return render(job.result);
     }
     if (job.status === "error") throw new Error(job.error);
@@ -117,27 +138,63 @@ function showError(msg) {
 
 /* --------------------------------------------------------------- results */
 
+let overlayRunning = false;
+
 function render(result) {
   state.result = result;
+  state.clip = Math.min(state.clip, Math.max((result.clips?.length ?? 1) - 1, 0));
   $("upload-panel").classList.add("hidden");
+  $("mark-panel").classList.add("hidden");
   $("results").classList.remove("hidden");
 
   renderStats(result);
   renderTargeting(result);
   renderTable(result);
   renderNotes(result);
+  renderClipTabs();
   drawChart();
+  loadClipVideo();
+  if (!overlayRunning) {
+    overlayRunning = true;
+    requestAnimationFrame(drawOverlay);
+  }
+}
 
+function loadClipVideo(then) {
   const video = $("video");
+  $("video-hint").textContent = "";
   sizeOverlay();                     // the analysis already told us the dimensions
-  video.src = `/api/jobs/${state.jobId}/video`;
-  video.addEventListener("loadedmetadata", sizeOverlay, { once: true });
+  video.addEventListener("loadedmetadata", () => { sizeOverlay(); then?.(); }, { once: true });
   video.addEventListener("error", () => {
     $("video-hint").textContent =
       "This browser cannot play the clip's codec, so the overlay is unavailable. " +
       "The shot chart and numbers below are unaffected.";
   }, { once: true });
-  requestAnimationFrame(drawOverlay);
+  video.src = `/api/jobs/${state.jobId}/video?clip=${uploadIndex()}`;
+}
+
+function selectClip(i, then) {
+  if (i === state.clip) return then?.();
+  state.clip = i;
+  renderClipTabs();
+  renderStats(state.result);
+  loadClipVideo(then);
+}
+
+function renderClipTabs() {
+  const clips = state.result?.clips ?? [];
+  const el = $("clip-tabs");
+  el.classList.toggle("hidden", clips.length < 2);
+  if (clips.length < 2) return;
+  el.innerHTML = clips.map((c, i) => {
+    const n = state.result.shots.filter((s) => (s.clip ?? 0) === i).length;
+    const count = c.net ? `${n} shot${n === 1 ? "" : "s"}` : "net not found";
+    return `<button type="button" class="clip-tab${c.net ? "" : " no-net"}" role="tab"
+      aria-selected="${i === state.clip}" data-clip="${i}" title="${escapeHtml(c.name ?? "")}">
+      Clip ${i + 1}<span class="count">\u00b7 ${count}</span></button>`;
+  }).join("");
+  el.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => selectClip(Number(b.dataset.clip))));
 }
 
 function renderStats(r) {
@@ -168,8 +225,9 @@ function renderStats(r) {
   // the goal -- this is the number that gives it away, so it sits with the
   // footage as a check rather than among the scores.
   const cam = $("camera-check");
-  if (r.camera?.position_in) {
-    const ft = r.camera.position_in[2] / 12;
+  const camera = clipR()?.camera;
+  if (camera?.position_in) {
+    const ft = camera.position_in[2] / 12;
     cam.textContent = `The camera works out to about ${ft.toFixed(0)} ft from the net. ` +
       "If that's clearly wrong, the net was marked on the wrong rectangle.";
     cam.classList.remove("hidden");
@@ -226,6 +284,7 @@ $("target-live").addEventListener("change", async (e) => {
 });
 
 function renderTable(r) {
+  const multi = (r.clips?.length ?? 1) > 1;
   const rows = r.shots.map((s) => {
     const speed = s.speed
       ? `${s.speed.mph.toFixed(1)} <span class="unc">${s.speed.uncertainty_mph != null ? `±${s.speed.uncertainty_mph.toFixed(1)}` : ""}</span>`
@@ -236,8 +295,9 @@ function renderTable(r) {
     const aim = !vt ? "" : vt.hit
       ? `<span class="vs-hit">on target</span>`
       : `${Math.round(vt.distance_in)}" off <span class="unc">${escapeHtml(vt.target_label)}</span>`;
-    return `<tr data-frame="${s.impact_frame}">
+    return `<tr data-frame="${s.impact_frame}" data-clip="${s.clip ?? 0}">
       <td>${s.index + 1}</td>
+      ${multi ? `<td class="unc">${(s.clip ?? 0) + 1}</td>` : ""}
       <td>${speed}</td>
       <td><span class="pill ${s.outcome}">${label}</span></td>
       <td>${where}</td>
@@ -246,11 +306,11 @@ function renderTable(r) {
     </tr>`;
   }).join("");
   $("shot-table").innerHTML =
-    `<thead><tr><th>#</th><th>Speed (mph)</th><th>Result</th><th>Where</th>
+    `<thead><tr><th>#</th>${multi ? "<th>Clip</th>" : ""}<th>Speed (mph)</th><th>Result</th><th>Where</th>
        ${r.targeting ? "<th>Vs target</th>" : ""}<th>Position</th></tr></thead>
      <tbody>${rows}</tbody>`;
   $("shot-table").querySelectorAll("tbody tr").forEach((tr) =>
-    tr.addEventListener("click", () => seekToFrame(Number(tr.dataset.frame)))
+    tr.addEventListener("click", () => seekToFrame(Number(tr.dataset.frame), Number(tr.dataset.clip)))
   );
 }
 
@@ -265,10 +325,11 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function seekToFrame(frame) {
+function seekToFrame(frame, clip = state.clip) {
+  if (clip !== state.clip) return selectClip(clip, () => seekToFrame(frame, clip));
   const video = $("video");
   // Seeking goes by the rate the file plays at, which slow motion makes lower than the rate it was filmed at.
-  const fps = state.result?.video?.playback_fps || state.result?.video?.fps;
+  const fps = clipR()?.video?.playback_fps || clipR()?.video?.fps;
   if (!fps || !Number.isFinite(video.duration)) return;
   video.currentTime = Math.max(0, frame / fps - 0.15);
   video.pause();
@@ -277,16 +338,23 @@ function seekToFrame(frame) {
 
 /* ------------------------------------------------------- marking the net */
 
-async function offerManualMarking(result) {
+async function offerManualMarking(clip, job) {
   $("progress").classList.add("hidden");
   $("upload-panel").classList.add("hidden");
+  $("results").classList.add("hidden");
   $("mark-panel").classList.remove("hidden");
 
-  const why = (result.warnings || []).find((w) => w.includes("goal")) ||
+  state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false, clip };
+  const clipResult = (job.result?.clips ?? []).find((c) => (c.upload_index ?? 0) === clip);
+  const why = (clipResult?.warnings || []).find((w) => w.includes("goal")) ||
     "The goal could not be found automatically.";
-  $("mark-intro").textContent = why + " Mark it once here and the clip will be re-read.";
+  const many = (job.clips?.length ?? 1) > 1;
+  const which = many ? `Clip ${clip + 1} (${job.clips[clip].name}): ` : "";
+  $("mark-intro").textContent = which + why + " Mark it once here and the clip will be re-read.";
+  $("mark-skip").classList.toggle("hidden", !many);
+  $("mark-go").disabled = true;
 
-  state.mark.info = await (await fetch(`/api/jobs/${state.jobId}/info`)).json();
+  state.mark.info = await (await fetch(`/api/jobs/${state.jobId}/info?clip=${clip}`)).json();
   const slider = $("mark-frame");
   slider.max = Math.max(0, (state.mark.info.frame_count || 1) - 1);
   slider.value = Math.floor((state.mark.info.frame_count || 1) / 2);
@@ -306,7 +374,7 @@ function loadMarkFrame() {
       drawMark();
       resolve();
     };
-    img.src = `/api/jobs/${state.jobId}/frame.png?frame=${state.mark.frame}`;
+    img.src = `/api/jobs/${state.jobId}/frame.png?frame=${state.mark.frame}&clip=${state.mark.clip}`;
   });
 }
 
@@ -316,7 +384,7 @@ async function suggestCorners() {
   // Never overwrite corners the player has started placing themselves.
   if (state.mark.corners.length && !state.mark.suggested) return;
   try {
-    const res = await fetch(`/api/jobs/${state.jobId}/suggest-net?frame=${state.mark.frame}`);
+    const res = await fetch(`/api/jobs/${state.jobId}/suggest-net?frame=${state.mark.frame}&clip=${state.mark.clip}`);
     const s = await res.json();
     if (s.quad) {
       state.mark.corners = s.quad.map(([x, y]) => [x, y]);
@@ -591,6 +659,7 @@ $("mark-undo").addEventListener("click", () => {
 $("mark-go").addEventListener("click", async () => {
   const body = new FormData();
   body.append("net_quad", state.mark.corners.flat().map((v) => v.toFixed(1)).join(","));
+  body.append("clip", state.mark.clip);
   $("mark-go").disabled = true;
   try {
     const res = await fetch(`/api/jobs/${state.jobId}/reanalyze`, { method: "POST", body });
@@ -599,24 +668,26 @@ $("mark-go").addEventListener("click", async () => {
     $("upload-panel").classList.remove("hidden");
     $("progress").classList.remove("hidden");
     setProgress("re-reading with your net", 0.05);
-    pollAfterMark();
+    poll();
   } catch (err) {
     showError(err.message);
     $("mark-go").disabled = false;
   }
 });
 
-async function pollAfterMark() {
+// A clip whose net cannot be marked -- the goal out of shot, say -- can be
+// left out, and the rest of the session goes ahead without it.
+$("mark-skip").addEventListener("click", async () => {
+  const body = new FormData();
+  body.append("clip", state.mark.clip);
   try {
-    const job = await (await fetch(`/api/jobs/${state.jobId}`)).json();
-    setProgress(job.stage, job.progress);
-    if (job.status === "done") return render(job.result);
-    if (job.status === "error") throw new Error(job.error);
-    setTimeout(pollAfterMark, POLL_MS);
+    const res = await fetch(`/api/jobs/${state.jobId}/skip`, { method: "POST", body });
+    if (!res.ok) throw new Error((await res.json()).detail ?? "could not leave the clip out");
+    poll();
   } catch (err) {
     showError(err.message);
   }
-}
+});
 
 /* ------------------------------------------------------------ shot chart */
 
@@ -739,7 +810,7 @@ function drawChart() {
     const tag = shot.speed ? `${shot.index + 1} · ${Math.round(shot.speed.mph)}` : `${shot.index + 1}`;
     ctx.fillText(tag, px, py - rad - 5);
 
-    state.chartHits.push({ x: px, y: py, r: rad + 6, frame: shot.impact_frame });
+    state.chartHits.push({ x: px, y: py, r: rad + 6, frame: shot.impact_frame, clip: shot.clip ?? 0 });
   }
 }
 
@@ -756,7 +827,7 @@ $("chart").addEventListener("click", (e) => {
   const x = (e.clientX - rect.left) * (canvas.width / rect.width);
   const y = (e.clientY - rect.top) * (canvas.height / rect.height);
   const hit = state.chartHits.find((h) => Math.hypot(h.x - x, h.y - y) <= h.r);
-  if (hit) seekToFrame(hit.frame);
+  if (hit) seekToFrame(hit.frame, hit.clip);
 });
 
 $("show-zones").addEventListener("change", drawChart);
@@ -766,7 +837,7 @@ $("show-zones").addEventListener("change", drawChart);
 function sizeOverlay() {
   const video = $("video");
   const canvas = $("overlay");
-  const v = state.result?.video ?? {};
+  const v = clipR()?.video ?? {};
   canvas.width = video.videoWidth || v.width || 1280;
   canvas.height = video.videoHeight || v.height || 720;
 }
@@ -776,8 +847,8 @@ window.addEventListener("resize", () => { sizeOverlay(); drawOverlay(); });
 function drawOverlay() {
   const video = $("video");
   const canvas = $("overlay");
-  const r = state.result;
-  if (r && canvas.width) {
+  const r = clipR();
+  if (r?.video && canvas.width) {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -868,7 +939,8 @@ function drawImpacts(ctx, r, frame) {
     ctx.strokeStyle = "#0b1220";
     ctx.stroke();
 
-    const tag = shot.speed ? `${shot.index + 1}  ${Math.round(shot.speed.mph)} mph` : `${shot.index + 1}`;
+    const n = sessionNo(state.clip, shot.index);
+    const tag = shot.speed ? `${n}  ${Math.round(shot.speed.mph)} mph` : `${n}`;
     ctx.font = "600 18px system-ui, sans-serif";
     ctx.textAlign = "left";
     ctx.lineWidth = 4;

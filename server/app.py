@@ -27,6 +27,7 @@ from shottracker.config import CameraConfig, Config
 from shottracker.net_detect import detect_net_in_frame
 from shottracker.pipeline import SessionResult, analyze
 from shottracker.report import shot_chart_svg
+from shottracker.session import ShotSession
 from shottracker.targets import TARGET_CHOICES
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -38,12 +39,22 @@ ALLOWED_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
 
 @dataclass
+class ClipJob:
+    """One uploaded clip within a session."""
+
+    name: str
+    video_path: str
+    net_quad: list[list[float]] | None = None   # set when the player marked the net
+    result: SessionResult | None = None
+    skipped: bool = False                        # the player chose to leave it out
+
+
+@dataclass
 class Job:
     id: str
-    video_path: str
-    cfg: Config | None = None       # kept so the clip can be re-run with a marked net
-    net_quad: list[list[float]] | None = None
-    session: SessionResult | None = None   # kept so targets can be re-scored without the video
+    clips: list[ClipJob]
+    cfg: Config | None = None       # shared by every clip: the goal and the target
+    session: ShotSession | None = None   # kept so targets can be re-scored without the video
     status: str = "queued"        # queued | running | done | error
     stage: str = "queued"
     progress: float = 0.0
@@ -51,6 +62,10 @@ class Job:
     chart_svg: str | None = None
     error: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @property
+    def video_path(self) -> str:
+        return self.clips[0].video_path
 
     def public(self) -> dict[str, Any]:
         return {
@@ -61,7 +76,11 @@ class Job:
             "error": self.error,
             "created_at": self.created_at,
             "result": self.result,
-            "net_quad": self.net_quad,
+            "clips": [
+                {"name": c.name, "has_net": bool(c.result and c.result.net is not None),
+                 "net_quad": c.net_quad, "skipped": c.skipped}
+                for c in self.clips
+            ],
         }
 
 
@@ -71,33 +90,68 @@ JOBS_LOCK = threading.Lock()
 app = FastAPI(title="Shot Tracker", version="0.1.0")
 
 
-def _run_job(job_id: str, cfg: Config) -> None:
+def _publish(job: Job) -> None:
+    """Rebuild the session from the clips that are in it, and its result."""
+    kept = [i for i, c in enumerate(job.clips) if c.result is not None and not c.skipped]
+    if not kept:
+        job.session, job.result, job.chart_svg = None, None, None
+        return
+    job.session = ShotSession.from_results([(job.clips[i].name, job.clips[i].result) for i in kept], job.cfg)
+    job.result = job.session.to_dict()
+    # A skipped clip drops out of the session, so each clip carries its place
+    # in the upload: that is the number the clip endpoints take.
+    for clip_dict, i in zip(job.result["clips"], kept):
+        clip_dict["upload_index"] = i
+    job.chart_svg = shot_chart_svg(job.session)
+
+
+def _run_job(job_id: str, cfg: Config, only: int | None = None) -> None:
+    """Analyze a job's clips -- all of them, or just the one that was re-marked."""
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     if job is None:
         return
     job.cfg = cfg
     job.status, job.stage, job.error = "running", "starting", None
+    todo = [only] if only is not None else list(range(len(job.clips)))
 
-    def progress(stage: str, frac: float) -> None:
-        job.stage, job.progress = stage, float(frac)
-
-    quad = np.asarray(job.net_quad, dtype=float) if job.net_quad else None
     try:
-        result = analyze(job.video_path, cfg, net_quad=quad, progress=progress)
-        job.session = result
-        job.result = result.to_dict()
-        job.chart_svg = shot_chart_svg(result)
+        for n, ci in enumerate(todo):
+            clip = job.clips[ci]
+            where = f"clip {ci + 1} of {len(job.clips)}: " if len(job.clips) > 1 else ""
+
+            def progress(stage: str, frac: float, n=n, where=where) -> None:
+                job.stage, job.progress = where + stage, (n + float(frac)) / len(todo)
+
+            quad = np.asarray(clip.net_quad, dtype=float) if clip.net_quad else None
+            clip.result = analyze(clip.video_path, cfg, net_quad=quad, progress=progress)
+        _publish(job)
         job.status, job.stage, job.progress = "done", "done", 1.0
     except Exception as exc:  # surfaced to the client rather than swallowed
         job.status, job.error = "error", f"{type(exc).__name__}: {exc}"
         job.stage = "failed"
 
 
+MAX_CLIPS = int(os.environ.get("SHOTTRACKER_MAX_CLIPS", "30"))
+
+
+async def _save_upload(upload: UploadFile, dest: Path, budget: int) -> int:
+    """Stream one upload to disk, stopping at ``budget`` bytes."""
+    size = 0
+    with dest.open("wb") as fh:
+        while chunk := await upload.read(1024 * 1024):
+            size += len(chunk)
+            if size > budget:
+                raise HTTPException(413, f"the clips add up to more than {MAX_UPLOAD_BYTES // (1024*1024)} MB")
+            fh.write(chunk)
+    return size
+
+
 @app.post("/api/analyze")
 async def create_job(
     background: BackgroundTasks,
-    video: UploadFile = File(...),
+    video: UploadFile | None = File(None),
+    videos: list[UploadFile] | None = File(None),
     shot_distance_ft: float | None = Form(None),
     shooter_offset_ft: float = Form(0.0),
     hfov_deg: float | None = Form(None),
@@ -107,27 +161,34 @@ async def create_job(
     target: str | None = Form(None),
     target_radius_in: float | None = Form(None),
 ):
-    suffix = Path(video.filename or "clip.mp4").suffix.lower()
-    if suffix not in ALLOWED_SUFFIXES:
-        raise HTTPException(400, f"unsupported file type {suffix!r}; use one of {sorted(ALLOWED_SUFFIXES)}")
+    """Start analyzing one clip, or several clips of the same goal as one session."""
+    uploads = [u for u in ([video] if video else []) + list(videos or []) if u is not None]
+    if not uploads:
+        raise HTTPException(400, "no video was uploaded")
+    if len(uploads) > MAX_CLIPS:
+        raise HTTPException(400, f"at most {MAX_CLIPS} clips per session")
+    for u in uploads:
+        suffix = Path(u.filename or "clip.mp4").suffix.lower()
+        if suffix not in ALLOWED_SUFFIXES:
+            raise HTTPException(400, f"unsupported file type {suffix!r}; use one of {sorted(ALLOWED_SUFFIXES)}")
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = DATA_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    dest = job_dir / f"source{suffix}"
-
-    size = 0
-    with dest.open("wb") as fh:
-        while chunk := await video.read(1024 * 1024):
-            size += len(chunk)
-            if size > MAX_UPLOAD_BYTES:
-                fh.close()
-                shutil.rmtree(job_dir, ignore_errors=True)
-                raise HTTPException(413, f"clip is larger than {MAX_UPLOAD_BYTES // (1024*1024)} MB")
-            fh.write(chunk)
-    if size == 0:
+    clips: list[ClipJob] = []
+    budget = MAX_UPLOAD_BYTES
+    try:
+        for i, u in enumerate(uploads):
+            suffix = Path(u.filename or "clip.mp4").suffix.lower()
+            dest = job_dir / f"clip{i}{suffix}"
+            size = await _save_upload(u, dest, budget)
+            if size == 0:
+                raise HTTPException(400, f"{u.filename or 'a clip'} was empty")
+            budget -= size
+            clips.append(ClipJob(name=u.filename or f"clip {i + 1}", video_path=str(dest)))
+    except HTTPException:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(400, "the uploaded file was empty")
+        raise
 
     cfg = Config()
     cfg.speed.shot_distance_ft = shot_distance_ft
@@ -142,11 +203,11 @@ async def create_job(
         cfg.goal.mouth_height_in = goal_height_in
     _apply_target(cfg, target, target_radius_in)
 
-    job = Job(id=job_id, video_path=str(dest))
+    job = Job(id=job_id, clips=clips)
     with JOBS_LOCK:
         JOBS[job_id] = job
     background.add_task(asyncio.to_thread, _run_job, job_id, cfg)
-    return JSONResponse({"id": job_id}, status_code=202)
+    return JSONResponse({"id": job_id, "clips": len(clips)}, status_code=202)
 
 
 def _apply_target(cfg: Config, target: str | None, radius: float | None) -> None:
@@ -170,6 +231,12 @@ def _job_or_404(job_id: str) -> Job:
     return job
 
 
+def _clip_or_404(job: Job, clip: int) -> ClipJob:
+    if not 0 <= clip < len(job.clips):
+        raise HTTPException(404, "no such clip in this session")
+    return job.clips[clip]
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     return _job_or_404(job_id).public()
@@ -184,11 +251,11 @@ def get_chart(job_id: str):
 
 
 @app.get("/api/jobs/{job_id}/frame.png")
-def get_frame(job_id: str, frame: int = 0):
+def get_frame(job_id: str, frame: int = 0, clip: int = 0):
     """A single decoded frame, so the browser can show it even for codecs it
     cannot play. Marking the net by hand depends on this."""
     job = _job_or_404(job_id)
-    cap = cv2.VideoCapture(job.video_path)
+    cap = cv2.VideoCapture(_clip_or_404(job, clip).video_path)
     if not cap.isOpened():
         raise HTTPException(404, "the clip could not be opened")
     try:
@@ -208,7 +275,7 @@ def get_frame(job_id: str, frame: int = 0):
 
 
 @app.get("/api/jobs/{job_id}/suggest-net")
-def suggest_net(job_id: str, frame: int = 0):
+def suggest_net(job_id: str, frame: int = 0, clip: int = 0):
     """The goal outline in one frame, to pre-fill the marking screen.
 
     When the camera moved, no single outline fits the whole clip, but the goal
@@ -216,7 +283,7 @@ def suggest_net(job_id: str, frame: int = 0):
     a suggestion: the player confirms it or drags the corners.
     """
     job = _job_or_404(job_id)
-    cap = cv2.VideoCapture(job.video_path)
+    cap = cv2.VideoCapture(_clip_or_404(job, clip).video_path)
     try:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(frame, max(total - 1, 0))))
@@ -234,10 +301,10 @@ def suggest_net(job_id: str, frame: int = 0):
 
 
 @app.get("/api/jobs/{job_id}/info")
-def get_info(job_id: str):
+def get_info(job_id: str, clip: int = 0):
     """Dimensions and length, needed to scale hand-placed corners correctly."""
     job = _job_or_404(job_id)
-    cap = cv2.VideoCapture(job.video_path)
+    cap = cv2.VideoCapture(_clip_or_404(job, clip).video_path)
     try:
         info = {
             "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
@@ -251,15 +318,17 @@ def get_info(job_id: str):
 
 
 @app.post("/api/jobs/{job_id}/reanalyze")
-def reanalyze(job_id: str, background: BackgroundTasks, net_quad: str = Form(...)):
-    """Re-run the clip with the goal outline the player marked.
+def reanalyze(job_id: str, background: BackgroundTasks, net_quad: str = Form(...), clip: int = Form(0)):
+    """Re-run one clip with the goal outline the player marked.
 
     Four corners of the outer pipe, in source-video pixels, as
     x1,y1,x2,y2,x3,y3,x4,y4 -- top-left, top-right, bottom-right, bottom-left.
+    The session's other clips keep their results.
     """
     job = _job_or_404(job_id)
+    target = _clip_or_404(job, clip)
     if job.status == "running":
-        raise HTTPException(409, "this clip is still being analyzed")
+        raise HTTPException(409, "this session is still being analyzed")
     try:
         vals = [float(v) for v in net_quad.replace(";", ",").split(",") if v.strip()]
     except ValueError:
@@ -267,10 +336,21 @@ def reanalyze(job_id: str, background: BackgroundTasks, net_quad: str = Form(...
     if len(vals) != 8:
         raise HTTPException(400, "four corners are needed: x1,y1,x2,y2,x3,y3,x4,y4")
 
-    job.net_quad = [[vals[i], vals[i + 1]] for i in range(0, 8, 2)]
+    target.net_quad = [[vals[i], vals[i + 1]] for i in range(0, 8, 2)]
+    target.skipped = False
     job.status, job.stage, job.progress, job.result = "queued", "queued", 0.0, None
-    background.add_task(asyncio.to_thread, _run_job, job_id, job.cfg or Config())
+    background.add_task(asyncio.to_thread, _run_job, job_id, job.cfg or Config(), clip)
     return JSONResponse({"id": job.id}, status_code=202)
+
+
+@app.post("/api/jobs/{job_id}/skip")
+def skip_clip(job_id: str, clip: int = Form(...)):
+    """Leave a clip out of the session -- one whose net the player cannot mark."""
+    job = _job_or_404(job_id)
+    _clip_or_404(job, clip).skipped = True
+    if job.status == "done":
+        _publish(job)
+    return job.public()
 
 
 @app.post("/api/jobs/{job_id}/target")
@@ -281,18 +361,17 @@ def retarget(job_id: str, target: str | None = Form(None), target_radius_in: flo
     ask "and how would I have done aiming top shelf?" without a re-run.
     """
     job = _job_or_404(job_id)
-    if job.session is None:
+    if job.session is None or job.cfg is None:
         raise HTTPException(409, "the analysis has not finished yet")
-    _apply_target(job.session.config, target, target_radius_in)
-    job.result = job.session.to_dict()
-    job.chart_svg = shot_chart_svg(job.session)
+    _apply_target(job.cfg, target, target_radius_in)
+    _publish(job)
     return job.public()
 
 
 @app.get("/api/jobs/{job_id}/video")
-def get_video(job_id: str):
+def get_video(job_id: str, clip: int = 0):
     job = _job_or_404(job_id)
-    path = Path(job.video_path)
+    path = Path(_clip_or_404(job, clip).video_path)
     if not path.exists():
         raise HTTPException(404, "the clip is no longer on disk")
     return FileResponse(path)

@@ -17,8 +17,10 @@
   <section id="upload-panel" class="card">
     <form id="upload-form">
       <label class="file-drop" id="file-drop">
-        <input type="file" id="video-input" accept="video/*" required>
-        <span class="file-drop-text">Choose a clip, or drop one here</span>
+        <input type="file" id="video-input" accept="video/*" multiple required>
+        <span class="file-drop-text">Choose clips, or drop them here</span>
+        <span class="file-drop-sub">Several clips of the same net make one session &mdash;
+          handy for slow motion, which often holds one shot per clip.</span>
         <span class="file-name" id="file-name"></span>
       </label>
 
@@ -116,6 +118,7 @@
         <input type="range" id="mark-frame" min="0" max="100" value="0">
       </label>
       <div class="mark-buttons">
+        <button type="button" id="mark-skip" class="secondary hidden">Leave this clip out</button>
         <button type="button" id="mark-undo" class="secondary">Undo</button>
         <button type="button" id="mark-go" disabled>Analyze with this net</button>
       </div>
@@ -128,6 +131,7 @@
     <div class="split">
       <div class="card">
         <h2>The footage</h2>
+        <div class="clip-tabs hidden" id="clip-tabs" role="tablist" aria-label="Clips in this session"></div>
         <div class="video-wrap">
           <video id="video" controls playsinline></video>
           <canvas id="overlay"></canvas>
@@ -181,7 +185,7 @@
       <ul id="notes"></ul>
     </div>
 
-    <button id="again" class="secondary">Analyze another clip</button>
+    <button id="again" class="secondary">Analyze another session</button>
   </section>
 </main>
 

@@ -62,7 +62,27 @@ Target    Any Corner (6" radius): 2 of 4 on target, 13" off on average
   4   298      60.5 mph ±3.5 missed - 0.7 ft wide right   [20" off Top Shelf Right]
 ```
 
-Or run the web app and drag a clip in:
+Slow motion usually comes a shot or two per clip. Give several clips of the
+same net and they are read as one session: each clip gets its own net outline
+and frame rate, and the shots pool into one chart, one set of numbers and one
+target score.
+
+```bash
+.venv/bin/shottracker analyze IMG_0201.MOV IMG_0202.MOV IMG_0203.MOV --distance 18.75 \
+    --target any_corner --chart session.svg
+```
+
+```
+[1] IMG_0201.MOV
+    Clip      1080x1920 @ 240 fps (slow motion, plays at 30), 251 frames
+    ...
+Shots     3   on net 2   posts 0   missed 1
+  #   clip frame    speed          where
+  1   1    208      39.0 mph ±4.1 missed - 0.6 ft wide right
+  ...
+```
+
+Or run the web app and drag a clip in — or several, for a session:
 
 ```bash
 PYTHONPATH=src:server .venv/bin/python -m uvicorn app:app --reload
@@ -71,7 +91,10 @@ PYTHONPATH=src:server .venv/bin/python -m uvicorn app:app --reload
 
 The browser plays your original clip and draws the analysis over it on a
 canvas — nothing is re-encoded, so playback stays smooth and you can scrub to
-any shot by clicking its mark on the chart.
+any shot by clicking its mark on the chart. With several clips, a switcher
+above the footage picks which one plays, and clicking a shot opens its clip.
+If the net cannot be found in one clip you are asked to mark it in that clip
+only, or to leave the clip out.
 
 ## Filming so the numbers are good
 
@@ -305,7 +328,8 @@ web/                the browser app: canvas overlay on the original video, inter
   stabilize.py      optional motion compensation (off by default, see below)
   targets.py        scoring shots against what the player was aiming at
   container.py      reads a video file's own track timing, to catch baked-in slow motion
-tests/              124 tests, including end-to-end accuracy against ground truth
+  session.py        several clips of one goal read as one session
+tests/              137 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it

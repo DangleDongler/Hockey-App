@@ -157,3 +157,16 @@ select {
 .vs-hit { color: var(--on-net); font-weight: 600; }
 
 .hidden { display: none !important; }
+
+/* Several clips in one session */
+.file-drop-sub { display: block; color: var(--muted); font-size: .8rem; margin-top: .35rem; }
+.clip-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+.clip-tab {
+  background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+  padding: .3rem .75rem; font-size: .82rem; font-weight: 600; cursor: pointer;
+}
+.clip-tab:hover { border-color: var(--accent); color: var(--ink); }
+.clip-tab[aria-selected="true"] { background: var(--card-2); color: var(--accent); border-color: var(--accent); }
+.clip-tab.no-net { border-style: dashed; color: var(--post); }
+.clip-tab .count { color: var(--muted); font-weight: 500; margin-left: .3rem; }
+button.clip-tab { width: auto; padding: .3rem .8rem; font-size: .82rem; }
