@@ -7,6 +7,7 @@ rather than one long request that a phone network would drop.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import tempfile
@@ -24,6 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from shottracker.config import CameraConfig, Config
+from shottracker.history import progress, rescore, session_record
 from shottracker.net_detect import detect_net_in_frame
 from shottracker.pipeline import SessionResult, analyze
 from shottracker.report import shot_chart_svg
@@ -90,11 +92,87 @@ JOBS_LOCK = threading.Lock()
 app = FastAPI(title="Shot Tracker", version="0.1.0")
 
 
+# --- saved sessions ----------------------------------------------------------
+# Each finished session is written next to its clips as session.json, so the
+# history survives a restart and an old session can be reopened (and re-scored
+# against a new target) without reading the video again.
+
+SESSION_FILE = "session.json"
+
+
+def _settings(cfg: Config) -> dict[str, Any]:
+    return {
+        "shot_distance_ft": cfg.speed.shot_distance_ft,
+        "shooter_offset_ft": cfg.speed.shooter_offset_ft,
+        "assumed_focal_frac": cfg.camera.assumed_focal_frac,
+        "fps_override": cfg.fps_override,
+        "goal": {"mouth_width_in": cfg.goal.mouth_width_in, "mouth_height_in": cfg.goal.mouth_height_in},
+        "target": {"kind": cfg.target.kind, "radius_in": cfg.target.radius_in,
+                   "x_in": cfg.target.x_in, "y_in": cfg.target.y_in},
+    }
+
+
+def _config_from(settings: dict[str, Any]) -> Config:
+    cfg = Config()
+    cfg.speed.shot_distance_ft = settings.get("shot_distance_ft")
+    cfg.speed.shooter_offset_ft = settings.get("shooter_offset_ft") or 0.0
+    cfg.camera.assumed_focal_frac = settings.get("assumed_focal_frac") or cfg.camera.assumed_focal_frac
+    cfg.fps_override = settings.get("fps_override")
+    goal = settings.get("goal") or {}
+    cfg.goal.mouth_width_in = goal.get("mouth_width_in") or cfg.goal.mouth_width_in
+    cfg.goal.mouth_height_in = goal.get("mouth_height_in") or cfg.goal.mouth_height_in
+    target = settings.get("target") or {}
+    cfg.target.kind = target.get("kind")
+    cfg.target.radius_in = target.get("radius_in") or cfg.target.radius_in
+    cfg.target.x_in, cfg.target.y_in = target.get("x_in"), target.get("y_in")
+    return cfg
+
+
+def _session_path(job: Job) -> Path:
+    return Path(job.video_path).parent / SESSION_FILE
+
+
+def _persist(job: Job) -> None:
+    path = _session_path(job)
+    if job.result is None:
+        path.unlink(missing_ok=True)
+        return
+    doc = {
+        "id": job.id,
+        "created_at": job.created_at,
+        "settings": _settings(job.cfg or Config()),
+        "clips": [{"name": c.name, "file": Path(c.video_path).name, "net_quad": c.net_quad, "skipped": c.skipped}
+                  for c in job.clips],
+        "result": job.result,
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(doc))
+    tmp.replace(path)
+
+
+def _restore_saved_sessions() -> None:
+    """Bring back every saved session, as a finished job, when the server starts."""
+    for path in sorted(DATA_DIR.glob(f"*/{SESSION_FILE}")):
+        try:
+            doc = json.loads(path.read_text())
+            clips = [ClipJob(name=c["name"], video_path=str(path.parent / c["file"]),
+                             net_quad=c.get("net_quad"), skipped=bool(c.get("skipped")))
+                     for c in doc["clips"]]
+            job = Job(id=doc["id"], clips=clips, cfg=_config_from(doc.get("settings") or {}),
+                      status="done", stage="done", progress=1.0, result=doc["result"],
+                      created_at=doc["created_at"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # a damaged file loses that one session, not the history
+        with JOBS_LOCK:
+            JOBS.setdefault(job.id, job)
+
+
 def _publish(job: Job) -> None:
     """Rebuild the session from the clips that are in it, and its result."""
     kept = [i for i, c in enumerate(job.clips) if c.result is not None and not c.skipped]
     if not kept:
         job.session, job.result, job.chart_svg = None, None, None
+        _persist(job)
         return
     job.session = ShotSession.from_results([(job.clips[i].name, job.clips[i].result) for i in kept], job.cfg)
     job.result = job.session.to_dict()
@@ -103,6 +181,7 @@ def _publish(job: Job) -> None:
     for clip_dict, i in zip(job.result["clips"], kept):
         clip_dict["upload_index"] = i
     job.chart_svg = shot_chart_svg(job.session)
+    _persist(job)
 
 
 def _run_job(job_id: str, cfg: Config, only: int | None = None) -> None:
@@ -113,7 +192,12 @@ def _run_job(job_id: str, cfg: Config, only: int | None = None) -> None:
         return
     job.cfg = cfg
     job.status, job.stage, job.error = "running", "starting", None
-    todo = [only] if only is not None else list(range(len(job.clips)))
+    if only is None:
+        todo = list(range(len(job.clips)))
+    else:
+        # A session restored from disk has no clip results in memory, so the
+        # rest of it is read again along with the clip that was re-marked.
+        todo = sorted({only} | {i for i, c in enumerate(job.clips) if c.result is None and not c.skipped})
 
     try:
         for n, ci in enumerate(todo):
@@ -361,10 +445,15 @@ def retarget(job_id: str, target: str | None = Form(None), target_radius_in: flo
     ask "and how would I have done aiming top shelf?" without a re-run.
     """
     job = _job_or_404(job_id)
-    if job.session is None or job.cfg is None:
+    if job.result is None or job.cfg is None:
         raise HTTPException(409, "the analysis has not finished yet")
     _apply_target(job.cfg, target, target_radius_in)
-    _publish(job)
+    if job.session is not None:
+        _publish(job)
+    else:
+        # Restored from disk: re-score the saved impact points.
+        job.result = rescore(job.result, job.cfg.goal, job.cfg.target)
+        _persist(job)
     return job.public()
 
 
@@ -386,12 +475,24 @@ def delete_job(job_id: str):
     return {"deleted": job.id}
 
 
+@app.get("/api/sessions")
+def list_sessions():
+    """Every finished session, newest first, and how the latest compares."""
+    with JOBS_LOCK:
+        done = [j for j in JOBS.values() if j.status == "done" and j.result is not None]
+    records = [session_record(j.id, j.created_at, j.result) for j in done]
+    records.sort(key=lambda r: r["created_at"], reverse=True)
+    return {"sessions": records, "progress": progress(records)}
+
+
 @app.get("/api/health")
 def health():
     with JOBS_LOCK:
         n = len(JOBS)
     return {"ok": True, "jobs": n}
 
+
+_restore_saved_sessions()
 
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

@@ -96,6 +96,15 @@ above the footage picks which one plays, and clicking a shot opens its clip.
 If the net cannot be found in one clip you are asked to mark it in that clip
 only, or to leave the clip out.
 
+Every finished session is saved next to its clips (in `$SHOTTRACKER_DATA`,
+the system temp folder by default; point it somewhere permanent to keep a
+season's worth). The upload screen then shows **your progress**: the latest
+session's average speed, on-net rate and on-target rate, each against the
+average of the few sessions before it, with a trend line per number, and a
+list of past sessions to reopen, re-score against a different target, or
+delete. A handful of shots makes a noisy average, so the comparison is always
+against several earlier sessions, never just the last one.
+
 ## Filming so the numbers are good
 
 These are ordered by how much they actually decide whether a clip can be read
@@ -329,7 +338,8 @@ web/                the browser app: canvas overlay on the original video, inter
   targets.py        scoring shots against what the player was aiming at
   container.py      reads a video file's own track timing, to catch baked-in slow motion
   session.py        several clips of one goal read as one session
-tests/              137 tests, including end-to-end accuracy against ground truth
+  history.py        sessions over time: one line per session, and progress against earlier ones
+tests/              145 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it

@@ -99,6 +99,7 @@ $("again").addEventListener("click", () => {
   state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false, clip: 0 };
   state.clip = 0;
   $("upload-panel").classList.remove("hidden");
+  loadHistory();
   $("submit-btn").disabled = false;
   $("progress").classList.add("hidden");
 });
@@ -145,6 +146,7 @@ function render(result) {
   state.clip = Math.min(state.clip, Math.max((result.clips?.length ?? 1) - 1, 0));
   $("upload-panel").classList.add("hidden");
   $("mark-panel").classList.add("hidden");
+  $("history").classList.add("hidden");
   $("results").classList.remove("hidden");
 
   renderStats(result);
@@ -342,6 +344,7 @@ async function offerManualMarking(clip, job) {
   $("progress").classList.add("hidden");
   $("upload-panel").classList.add("hidden");
   $("results").classList.add("hidden");
+  $("history").classList.add("hidden");
   $("mark-panel").classList.remove("hidden");
 
   state.mark = { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false, clip };
@@ -950,3 +953,172 @@ function drawImpacts(ctx, r, frame) {
     ctx.fillText(tag, x + 16, y - 10);
   }
 }
+
+/* ------------------------------------------------------------- history */
+
+// Every finished session is kept on the server. The upload screen shows how
+// the latest compares with the ones before it, and any of them can be reopened.
+
+const PROGRESS_ORDER = ["speed_mean", "accuracy_pct", "hit_pct"];
+
+async function loadHistory() {
+  try {
+    const res = await fetch("/api/sessions");
+    if (!res.ok) return;
+    renderHistory(await res.json());
+  } catch {
+    // No history is not an error; the card just stays hidden.
+  }
+}
+
+const fmtValue = (v) => `${Math.round(v)}`;
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function deltaHtml(p) {
+  if (p.delta == null) return "First session with this &mdash; the next one will show a trend.";
+  const unit = p.unit === "%" ? " pts" : ` ${p.unit}`;
+  const vs = `vs your previous ${p.baseline_sessions === 1 ? "session" : `${p.baseline_sessions} sessions`}`;
+  const d = p.delta;
+  if (Math.abs(d) < 0.5) return `About the same ${vs}`;
+  const good = (d > 0) === p.up_is_good;
+  const arrow = d > 0 ? "▲" : "▼";
+  return `<span class="arrow ${good ? "good" : "bad"}" aria-hidden="true">${arrow}</span> ` +
+    `${d > 0 ? "up" : "down"} ${Math.abs(d).toFixed(p.unit === "%" ? 0 : 1)}${unit} ${vs}`;
+}
+
+// One series per tile: the trend in a quiet gray, the latest session in the
+// accent. Hover (or tap) a point for its session.
+function sparkSvg(key, p, W) {
+  const pts = p.series;
+  if (pts.length < 2 || !(W > 40)) return "";
+  const H = 44, PAD = 6;
+  const vals = pts.map((x) => x.value);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+  const X = (i) => PAD + (i * (W - 2 * PAD)) / (pts.length - 1);
+  const Y = (v) => H - PAD - ((v - lo) * (H - 2 * PAD)) / (hi - lo);
+  const line = pts.map((x, i) => `${X(i).toFixed(1)},${Y(x.value).toFixed(1)}`).join(" ");
+  const step = (W - 2 * PAD) / (pts.length - 1);
+  const dots = pts.map((x, i) =>
+    `<circle class="pt${i === pts.length - 1 ? " latest" : ""}" cx="${X(i).toFixed(1)}" cy="${Y(x.value).toFixed(1)}" r="4"></circle>`
+  ).join("");
+  // Hover bands split the width between points and stay inside the tile, so
+  // they never reach into the neighbouring tile's line.
+  const hits = pts.map((x, i) => {
+    const x0 = Math.max(0, X(i) - step / 2), x1 = Math.min(W, X(i) + step / 2);
+    return `<rect class="hit" data-key="${key}" data-i="${i}" x="${x0.toFixed(1)}" y="0" width="${(x1 - x0).toFixed(1)}" height="${H}"></rect>`;
+  }).join("");
+  // Drawn at the tile's own width, so the dots stay round.
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+    aria-label="${escapeHtml(p.label)} over ${pts.length} sessions"><polyline class="line" points="${line}"></polyline>${dots}${hits}</svg>`;
+}
+
+function renderHistory(h) {
+  const card = $("history");
+  const sessions = h.sessions ?? [];
+  card.classList.toggle("hidden", sessions.length === 0 || !$("results").classList.contains("hidden"));
+  if (!sessions.length) return;
+  state.history = h;
+
+  $("progress-tiles").innerHTML = PROGRESS_ORDER.filter((k) => h.progress?.[k]).map((k) => {
+    const p = h.progress[k];
+    return `<div class="ptile">
+      <div class="ptile-label">${escapeHtml(p.label)} &middot; latest session</div>
+      <div class="ptile-value">${fmtValue(p.latest)}<span class="unit">${p.unit === "%" ? "%" : p.unit}</span></div>
+      <div class="ptile-delta">${deltaHtml(p)}</div>
+      <div class="spark-slot" data-key="${k}"></div>
+    </div>`;
+  }).join("");
+  drawSparks();
+
+  renderHistoryTable(sessions);
+}
+
+function drawSparks() {
+  const h = state.history;
+  if (!h) return;
+  const tip = $("spark-tip");
+  $("progress-tiles").querySelectorAll(".spark-slot").forEach((slot) => {
+    const key = slot.dataset.key;
+    slot.innerHTML = sparkSvg(key, h.progress[key], Math.floor(slot.getBoundingClientRect().width));
+  });
+  $("progress-tiles").querySelectorAll(".hit").forEach((r) => {
+    const show = (e) => {
+      const p = h.progress[r.dataset.key];
+      const x = p.series[Number(r.dataset.i)];
+      const unit = p.unit === "%" ? "%" : ` ${p.unit}`;
+      tip.textContent = `${fmtWhen(x.created_at)} · ${fmtValue(x.value)}${unit} · ${x.shots} shot${x.shots === 1 ? "" : "s"}`;
+      tip.style.left = `${e.clientX + 12}px`;
+      tip.style.top = `${e.clientY - 34}px`;
+      tip.classList.remove("hidden");
+    };
+    r.addEventListener("mousemove", show);
+    r.addEventListener("click", show);
+    r.addEventListener("mouseleave", () => tip.classList.add("hidden"));
+  });
+}
+
+let sparkResize = null;
+window.addEventListener("resize", () => {
+  clearTimeout(sparkResize);
+  sparkResize = setTimeout(drawSparks, 120);
+});
+
+function renderHistoryTable(sessions) {
+  const rows = sessions.map((s) => {
+    const target = s.target_label ? `${s.target_hits}/${s.target_shots} <span class="unc">${escapeHtml(s.target_label)}</span>` : "<span class=\"unc\">&ndash;</span>";
+    const pct = s.accuracy_pct != null ? `${Math.round(s.accuracy_pct)}%` : "&ndash;";
+    const mean = s.speed_mean != null ? s.speed_mean.toFixed(0) : "&ndash;";
+    const max = s.speed_max != null ? s.speed_max.toFixed(0) : "&ndash;";
+    return `<tr data-id="${s.id}">
+      <td class="when">${fmtWhen(s.created_at)}</td>
+      <td>${s.shots}${s.clips > 1 ? ` <span class="unc">in ${s.clips} clips</span>` : ""}</td>
+      <td>${pct}</td>
+      <td>${mean}</td>
+      <td>${max}</td>
+      <td>${target}</td>
+      <td><button type="button" class="row-delete" data-id="${s.id}">Delete</button></td>
+    </tr>`;
+  }).join("");
+  $("history-table").innerHTML =
+    `<thead><tr><th>When</th><th>Shots</th><th>On net</th><th>Avg mph</th><th>Top mph</th><th>Target</th><th></th></tr></thead>
+     <tbody>${rows}</tbody>`;
+
+  $("history-table").querySelectorAll("tbody tr").forEach((tr) =>
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".row-delete")) return;
+      openSession(tr.dataset.id);
+    }));
+  // Deleting is permanent, so it takes a second click.
+  $("history-table").querySelectorAll(".row-delete").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!b.classList.contains("armed")) {
+        b.classList.add("armed");
+        b.textContent = "Delete?";
+        setTimeout(() => { b.classList.remove("armed"); b.textContent = "Delete"; }, 4000);
+        return;
+      }
+      await fetch(`/api/jobs/${b.dataset.id}`, { method: "DELETE" });
+      loadHistory();
+    }));
+}
+
+async function openSession(id) {
+  try {
+    const job = await (await fetch(`/api/jobs/${id}`)).json();
+    if (!job.result) throw new Error("That session has no results to show.");
+    state.jobId = id;
+    state.clip = 0;
+    $("history").classList.add("hidden");
+    render(job.result);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+loadHistory();

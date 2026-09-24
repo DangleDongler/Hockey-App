@@ -170,3 +170,37 @@ select {
 .clip-tab.no-net { border-style: dashed; color: var(--post); }
 .clip-tab .count { color: var(--muted); font-weight: 500; margin-left: .3rem; }
 button.clip-tab { width: auto; padding: .3rem .8rem; font-size: .82rem; }
+
+/* Progress across sessions */
+.ptiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .9rem; margin-bottom: 1.1rem; }
+.ptile { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: .85rem 1rem .6rem; position: relative; }
+.ptile-label { color: var(--muted); font-size: .8rem; font-weight: 600; letter-spacing: .02em; }
+.ptile-value { font-size: 1.9rem; font-weight: 700; line-height: 1.15; margin-top: .15rem; }
+.ptile-value .unit { font-size: .95rem; color: var(--muted); font-weight: 600; margin-left: .15rem; }
+.ptile-delta { font-size: .8rem; margin-top: .2rem; color: var(--muted); }
+.ptile-delta .arrow.good { color: var(--on-net); }
+.ptile-delta .arrow.bad { color: var(--miss); }
+.spark { display: block; overflow: hidden; }
+.spark .line { fill: none; stroke: #64748b; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spark .pt { fill: #64748b; stroke: var(--bg); stroke-width: 2; }
+.spark .pt.latest { fill: var(--accent); }
+.spark .hit { fill: transparent; cursor: default; }
+.spark-tip {
+  position: fixed; z-index: 10; pointer-events: none; background: var(--card-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; padding: .35rem .55rem; font-size: .8rem;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35); white-space: nowrap;
+}
+.table-wrap { overflow-x: auto; }
+.history-table { width: 100%; border-collapse: collapse; font-size: .88rem; font-variant-numeric: tabular-nums; }
+.history-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase;
+  letter-spacing: .04em; padding: .45rem .5rem; border-bottom: 1px solid var(--line); }
+.history-table td { padding: .55rem .5rem; border-bottom: 1px solid var(--line); }
+.history-table tbody tr { cursor: pointer; }
+.history-table tbody tr:hover td { background: var(--card-2); }
+.history-table .unc { color: var(--muted); }
+button.row-delete { width: auto; padding: .2rem .6rem; font-size: .78rem; background: transparent; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px; }
+button.row-delete.armed { color: var(--miss); border-color: var(--miss); }
+.spark-slot { width: 100%; min-height: 44px; margin-top: .45rem; }
+.spark-slot .spark { margin-top: 0; }
+.history-table td.when { white-space: nowrap; }
