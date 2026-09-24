@@ -223,10 +223,18 @@ def estimate_ballistic_3d(
         var = float(grad @ cov @ grad)
         if var >= 0:
             unc = float(np.sqrt(var) * IN_PER_SEC_TO_MPH)
-            rel = unc / max(mph, 1e-6)
-            conf = float(np.clip(0.9 * np.exp(-6.0 * rel), 0.02, 0.85))
     except Exception:
         pass
+    if unc is not None:
+        # The fit only knows how well the curve matches the dots -- and at
+        # 240 fps there are so many dots that this alone says +-1%.  Every ray
+        # it fits comes from the camera model, so the camera's own error comes
+        # with it: an assumed lens moves this estimate as much as it moves the
+        # time-of-flight one.
+        rel_cam = cfg.speed.assumed_lens_uncertainty_frac if cam.focal_assumed else cfg.speed.pose_uncertainty_frac
+        unc = float(np.hypot(unc, rel_cam * mph))
+        rel = unc / max(mph, 1e-6)
+        conf = float(np.clip(0.9 * np.exp(-6.0 * rel), 0.02, 0.85))
 
     notes = []
     if unc is not None and unc > 0.15 * mph:

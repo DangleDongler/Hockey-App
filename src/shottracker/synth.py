@@ -60,7 +60,13 @@ class Camera:
 
 
 def camera_preset(name: str, width: int = 1280, height: int = 720) -> Camera:
-    """Camera placements that match how people actually film themselves shooting."""
+    """Camera placements that match how people actually film themselves shooting.
+
+    "backyard" is the first real slow-motion clip's placement, as the tracker
+    measured it: a phone propped on the ground 27 ft out and 12 ft to the side,
+    8 in up, filming in portrait past the shooter.  It wants a portrait size
+    (see ``BACKYARD_SIZE``).
+    """
     presets = {
         # Phone on the boards off to one side: pixel motion tracks the puck.
         "side": (np.array([235.0, 50.0, 190.0]), np.array([0.0, 22.0, 0.0])),
@@ -70,11 +76,19 @@ def camera_preset(name: str, width: int = 1280, height: int = 720) -> Camera:
         "angled": (np.array([170.0, 58.0, 300.0]), np.array([0.0, 22.0, 0.0])),
         # Phone directly behind the shooter, square to the net.
         "head_on": (np.array([14.0, 56.0, 340.0]), np.array([0.0, 22.0, 0.0])),
+        # Phone propped on the ground, behind and beside the shooter.
+        "backyard": (np.array([144.0, 8.0, 328.0]), np.array([-10.0, 16.0, 0.0])),
     }
     if name not in presets:
         raise ValueError(f"unknown camera preset {name!r}; have {sorted(presets)}")
     pos, tgt = presets[name]
+    if name == "backyard":
+        # Portrait, with the goal at the ~177 px in 1080 the real clip showed.
+        return Camera(pos, tgt, width=width, height=height, hfov_deg=70.0)
     return Camera(pos, tgt, width=width, height=height)
+
+
+BACKYARD_SIZE = (540, 960)
 
 
 @dataclass
@@ -244,14 +258,24 @@ def render_session(
     seed: int = 0,
     ice_markings: bool = True,
     distractor: bool = False,
+    net_sway: bool = False,
+    foliage: bool = False,
 ) -> dict:
     """Render a clip and return its ground truth.
 
     ``distractor`` adds a dark blob drifting across the scene at stick speed,
     to check that trajectory filtering does not mistake it for a puck.
+
+    ``net_sway`` shakes the netting for a moment after every impact, the way a
+    real net keeps moving once the puck has stopped; ``foliage`` puts a bush
+    beside the goal whose leaves never keep still.  Both are what a backyard
+    adds to a rink, and both made fake shots on real footage.
     """
     goal = goal or GoalSpec()
-    cam = camera_preset(camera) if isinstance(camera, str) else camera
+    if isinstance(camera, str):
+        cam = camera_preset(camera, *BACKYARD_SIZE) if camera == "backyard" else camera_preset(camera)
+    else:
+        cam = camera
     rng = np.random.default_rng(seed)
 
     for s in shots:
@@ -261,6 +285,22 @@ def render_session(
 
     n_frames = int(round(duration_s * fps))
     background = draw_scene(cam, goal, ice_markings=ice_markings, rng=rng)
+
+    # The netting's footprint on screen: the bag behind the mouth.
+    hw_in, depth = goal.mouth_width_in / 2.0, -40.0
+    bag = cam.project(np.array([(-hw_in, goal.mouth_height_in, depth), (hw_in, goal.mouth_height_in, depth),
+                                (hw_in, 0.0, depth), (-hw_in, 0.0, depth)]))
+    net_mask = np.zeros(background.shape[:2], np.uint8)
+    cv2.fillPoly(net_mask, [np.round(bag).astype(np.int32)], 255)
+    net_mask = net_mask.astype(bool)
+    impacts = [s.start_time_s + s.flight_time_s for s in shots]
+
+    # A bush just beside the goal: dark green, with red flowers like the real one.
+    leaves = []
+    if foliage:
+        for _ in range(60):
+            p = np.array([goal.outer_width_in / 2 + rng.uniform(8, 60), rng.uniform(4, 70), rng.uniform(-60, -10)])
+            leaves.append((p, rng.uniform(0, 2 * np.pi), (40, 110, 40) if rng.random() < 0.8 else (60, 40, 200)))
 
     writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (cam.width, cam.height))
     if not writer.isOpened():
@@ -300,6 +340,24 @@ def render_session(
                 cv2.ellipse(
                     frame, (int(uv[0]), int(uv[1])), (r * 2, r), 20, 0, 360, (30, 30, 30), -1, cv2.LINE_AA
                 )
+
+            if net_sway:
+                # A damped shake of the mesh for a third of a second after each hit.
+                for t_hit in impacts:
+                    age = t - t_hit
+                    if 0.0 < age < 0.35:
+                        amp = 3.0 * np.exp(-age / 0.12)
+                        dx = int(round(amp * np.sin(2 * np.pi * 9.0 * age)))
+                        dy = int(round(0.6 * amp * np.cos(2 * np.pi * 7.0 * age)))
+                        shifted = np.roll(np.roll(background, dx, axis=1), dy, axis=0)
+                        frame[net_mask] = shifted[net_mask]
+
+            for p, phase, color in leaves:
+                sway = np.array([2.5 * np.sin(2 * np.pi * 1.7 * t + phase),
+                                 1.5 * np.cos(2 * np.pi * 2.3 * t + phase), 0.0])
+                uv = cam.project((p + sway).reshape(1, 3))[0]
+                r = max(2, int(cam.fx * 2.5 / max(cam.depth(p), 1.0)))
+                cv2.circle(frame, (int(uv[0]), int(uv[1])), r, color, -1, cv2.LINE_AA)
 
             for s in shots:
                 dt = t - s.start_time_s

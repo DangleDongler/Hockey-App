@@ -292,6 +292,7 @@ def _accept(track: Track, goal_width_px: float, cfg: Config) -> bool:
 
 
 def filter_by_speed(tracks: list[Track], goal_width_px: float, fps: float, cfg: Config) -> list[Track]:
-    """Drop trajectories too slow to be a shot."""
+    """Drop trajectories too slow to be a shot, or seen too briefly to be one."""
     min_step = cfg.track.min_mean_speed_goalwidths_per_sec * goal_width_px / max(fps, 1e-6)
-    return [t for t in tracks if t.mean_step_px >= min_step]
+    min_span = cfg.track.min_track_s * fps
+    return [t for t in tracks if t.mean_step_px >= min_step and t.span_frames >= min_span]

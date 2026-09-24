@@ -178,9 +178,9 @@ exactly. Reproduce with `shottracker benchmark`:
 camera         net   shots   on-net  off-net   zones    speed   worst  in bars
            % width   found   inches   inches   right   mean %       %
 ------------------------------------------------------------------------------
-side          0.57     4/4      1.3      6.6     4/4      1.2     3.1      4/4
-angled        0.75     4/4      0.6      3.5     4/4      1.5     2.9      4/4
-head_on       0.39     4/4      0.3      1.1     4/4      1.0     1.5      4/4   (lens assumed)
+side          0.65     4/4      1.3      6.5     4/4      1.1     3.0      4/4
+angled        0.87     4/4      0.6      3.5     4/4      1.9     3.2      4/4
+head_on       0.33     4/4      0.3      1.1     4/4      1.8     3.6      4/4   (lens assumed)
 ```
 
 The synthetic goal has bent corners like a real frame, so the corner the
@@ -192,6 +192,29 @@ target zone is identified correctly, and speed is within a couple of percent
 from any of the three camera positions. Every shot's true speed fell inside its
 stated ± in all three cases, which is the property that actually matters: a
 number without an honest error bar is worse than no number.
+
+### From a backyard camera
+
+`tests/test_backyard.py` renders the setup the first real slow-motion clip came
+from: a phone on the ground 27 ft out and 12 ft to the side, portrait, 240 fps,
+the goal 75 px wide, with a bush beside it whose leaves keep moving and netting
+that shakes after every hit. Three shots:
+
+| | Result |
+| --- | --- |
+| Shots found | 3 of 3, nothing else (without the rules from real footage, the bush and netting add fakes) |
+| Where they hit | 0.6–2.2 in off |
+| Speed, lens guessed | about 14% low, inside the stated ± (it says ±3.9 on 37.6 against a true 44.0) |
+| Speed, lens known | the gravity-based estimate is within 1% |
+
+The speed is the open problem for this spot. A camera at ground level, square
+to the net, cannot measure its own lens from the goal, and the pose it works
+out from a 75 px goal is off by a few feet, which the time-of-flight estimate
+inherits. The gravity-based estimate is exact once the lens is right, but on
+the one real clip so far it was far off (103 mph against a hand-timed 39), so
+it is not trusted by default. Knowing which phone lens filmed the clip (the
+iPhone's 0.5× and 1× differ by nearly half) is the likely fix, and more real
+slow-motion clips are what will show it.
 
 These are synthetic clips. They model perspective, motion blur, sensor noise,
 ballistic flight and the red rink lines that trip up a naive detector, but they
@@ -339,7 +362,7 @@ web/                the browser app: canvas overlay on the original video, inter
   container.py      reads a video file's own track timing, to catch baked-in slow motion
   session.py        several clips of one goal read as one session
   history.py        sessions over time: one line per session, and progress against earlier ones
-tests/              145 tests, including end-to-end accuracy against ground truth
+tests/              151 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
@@ -414,6 +437,13 @@ it -- so a stick travelling with the puck at release did not throw the speed.
 
 What it changed in the code:
 
+- **A shot is on camera for a tenth of a second or more.** The minimum track
+  was a count of detections, 4: a fair 0.13 s at 30 fps, but 0.017 s at 240,
+  where leaves flickering beside the goal strung together into "shots".
+- **Speed error bars include the camera.** At 240 fps the gravity-based fit
+  has so many points that its curve-fitting error alone said ±1%, so it won
+  every comparison while ignoring that the lens was guessed. It now carries
+  the same camera uncertainty as the time-of-flight estimate.
 - **Slow motion is recognised from the sound.** The phone shared the clip as
   8.4 s of 30 fps video with 1.1 s of sound. Read naively, every speed comes
   out 8x too slow. See *Filming* above.

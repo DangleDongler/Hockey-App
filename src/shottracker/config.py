@@ -170,6 +170,11 @@ class TrackingConfig:
     gate_vel_frac: float = 0.55
 
     min_track_length: int = 4
+    # ...and seen for at least this long.  A count of detections alone means
+    # 0.13 s at 30 fps but 0.017 s at 240, where leaves flickering beside the
+    # goal string together into "shots".  A real shot is on camera for a
+    # large part of its flight, a tenth of a second or more.
+    min_track_s: float = 0.1
     # A shot crosses ground fast; slow blobs are limbs, sticks, shadows.
     min_mean_speed_goalwidths_per_sec: float = 0.45
     # A puck in flight is very nearly a straight line in the image; the only
