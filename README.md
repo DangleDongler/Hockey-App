@@ -210,11 +210,31 @@ that shakes after every hit. Three shots:
 The speed is the open problem for this spot. A camera at ground level, square
 to the net, cannot measure its own lens from the goal, and the pose it works
 out from a 75 px goal is off by a few feet, which the time-of-flight estimate
-inherits. The gravity-based estimate is exact once the lens is right, but on
-the one real clip so far it was far off (103 mph against a hand-timed 39), so
-it is not trusted by default. Knowing which phone lens filmed the clip (the
-iPhone's 0.5× and 1× differ by nearly half) is the likely fix, and more real
-slow-motion clips are what will show it.
+inherits. The gravity-based estimate is exact once the lens is right.
+
+On the real clip the same two estimates disagree the same way, and the reason
+the gravity one looked absurd there (103 mph) turned out not to be the lens:
+
+| Real shot, 240 fps | mph |
+| --- | --- |
+| Time of flight (what the app reports) | 39.0 ± 4.1 |
+| By hand: release frame 130 → impact frame 209 over 18.75 ft | 39 |
+| Gravity fit, whole track, 0.5× lens | 96 |
+| Gravity fit, from frame 128 / 131 / 140 on, 0.5× lens | 46 / 45 / 44 |
+
+The track begins while the puck is still being dragged on the blade, which is
+not free flight, and fitting a parabola through that ruins the fit. From the
+release on, it gives 44–46 mph, about 15% above the time-of-flight figure,
+which is the gap the synthetic backyard shows between them with the true speed
+on the gravity side. The lens behind that number is inferred, not known: the
+net photo from the same phone was taken on the 0.5× ultra-wide (14 mm
+equivalent), and the net's size in the video fits it; the 1× lens would make
+the time-of-flight speed 33 mph, well away from the hand timing.
+
+So the next steps for speed are: find the release in the track and fit only
+the free flight; let the player say which lens they film with; and check both
+estimates against one independent measurement (a radar reading, or the same
+shot filmed from the side) before changing which one is reported.
 
 These are synthetic clips. They model perspective, motion blur, sensor noise,
 ballistic flight and the red rink lines that trip up a naive detector, but they
