@@ -382,7 +382,7 @@ web/                the browser app: canvas overlay on the original video, inter
   container.py      reads a video file's own track timing, to catch baked-in slow motion
   session.py        several clips of one goal read as one session
   history.py        sessions over time: one line per session, and progress against earlier ones
-tests/              151 tests, including end-to-end accuracy against ground truth
+tests/              152 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
