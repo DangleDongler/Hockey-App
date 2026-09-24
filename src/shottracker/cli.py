@@ -152,6 +152,15 @@ def cmd_benchmark(args) -> int:
     return 0
 
 
+def cmd_fullspeed(args) -> int:
+    """How much would be lost filming this shot at normal speed?"""
+    from .fullspeed import compare, format_table
+
+    cfg = _build_config(args)
+    print(format_table(compare(args.video, cfg, rates=tuple(args.rates))))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="shottracker",
@@ -200,6 +209,15 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--fps", type=float, default=120.0)
     d.add_argument("--overlay", action="store_true", help="also render the annotated video")
     d.set_defaults(func=cmd_demo)
+
+    f = sub.add_parser("fullspeed", help="read a slow-motion shot as if filmed at normal speed, and compare")
+    f.add_argument("video", help="a slow-motion clip of one shot")
+    f.add_argument("--distance", type=float, metavar="FT", help="shooting distance, in feet")
+    f.add_argument("--offset", type=float, metavar="FT", help="shooter's offset from net centre, in feet")
+    f.add_argument("--fps", type=float, help="the rate the clip was filmed at, if not detected")
+    f.add_argument("--rates", type=float, nargs="+", default=[30, 60], help="normal-speed rates to try")
+    f.add_argument("--speed-method", default=None)
+    f.set_defaults(func=cmd_fullspeed)
 
     b = sub.add_parser("benchmark", help="measure accuracy against synthetic clips with known answers")
     b.add_argument("--cameras", nargs="+", default=["side", "angled", "head_on"],

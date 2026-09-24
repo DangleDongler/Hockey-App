@@ -73,6 +73,23 @@ class CameraModel:
         return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
 
+    def flight_view_angle_deg(self, release: np.ndarray, target: np.ndarray) -> float:
+        """How obliquely the camera sees the flight from ``release`` to ``target``.
+
+        The angle between the line of sight to the middle of the flight and
+        the flight itself: near 0 from straight behind the shooter, where the
+        puck's progress toward the net barely shows, 90 from the side.
+        """
+        release, target = np.asarray(release, dtype=np.float64), np.asarray(target, dtype=np.float64)
+        flight = target - release
+        sight = (release + target) / 2.0 - self.position
+        n = float(np.linalg.norm(flight) * np.linalg.norm(sight))
+        if n < 1e-9:
+            return 0.0
+        cos = abs(float(np.dot(flight, sight))) / n
+        return float(np.degrees(np.arccos(np.clip(cos, 0.0, 1.0))))
+
+
 def _focal_from_constraints(H: np.ndarray, image_size: tuple[int, int]) -> tuple[float, float]:
     """Focal length implied by each of the two orthonormality constraints.
 

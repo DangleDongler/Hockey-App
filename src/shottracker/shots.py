@@ -17,7 +17,7 @@ import numpy as np
 from .camera import CameraModel
 from .config import Config
 from .geometry import GoalPlane, Zone, build_zones, outer_outline, point_in_mouth, zone_for
-from .speed import SpeedEstimate, estimate_speed
+from .speed import SpeedEstimate, estimate_speed, goal_line_crossing
 from .tracking import Track
 
 
@@ -149,6 +149,17 @@ def shot_from_track(
         impact_frame_f = float(last_frame)
 
     goal_xy = plane.to_goal(impact_px.reshape(1, 2))[0]
+    # The flight's end for timing purposes: where the timing says the puck
+    # reached the goal line.  Used for speed only -- see goal_line_crossing.
+    speed_end = goal_xy
+    if cfg.shot.time_the_crossing and cam is not None and cfg.speed.shot_distance_ft is not None:
+        release = np.array([cfg.speed.shooter_offset_ft * 12.0, cfg.speed.release_height_in,
+                            cfg.speed.shot_distance_ft * 12.0])
+        side_on = cam.flight_view_angle_deg(release, np.array([goal_xy[0], goal_xy[1], 0.0]))
+        crossed = (goal_line_crossing(track, plane, cam, cfg, goal_xy)
+                   if side_on >= cfg.shot.min_view_angle_for_timing_deg else None)
+        if crossed is not None:
+            speed_end = crossed[0]
     x, y = float(goal_xy[0]), float(goal_xy[1])
 
     margin = cfg.shot.miss_margin_in
@@ -166,7 +177,7 @@ def shot_from_track(
     if zone_key:
         zone_label = next((z.label for z in zones if z.key == zone_key), None)
 
-    speed = estimate_speed(track, plane, cam, np.array([x, y]), fps, cfg)
+    speed = estimate_speed(track, plane, cam, np.asarray(speed_end, dtype=float), fps, cfg)
 
     notes: list[str] = []
     if len(track) < 6:

@@ -382,11 +382,72 @@ web/                the browser app: canvas overlay on the original video, inter
   container.py      reads a video file's own track timing, to catch baked-in slow motion
   session.py        several clips of one goal read as one session
   history.py        sessions over time: one line per session, and progress against earlier ones
-tests/              152 tests, including end-to-end accuracy against ground truth
+  fullspeed.py      reads a slow-motion shot as the phone would have recorded it at 30/60 fps
+tests/              155 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
 is rendering video).
+
+## At normal speed (30 and 60 fps)
+
+Slow motion reads a shot well; the goal is to read it just as well from
+ordinary video. Real normal-speed footage with known answers is scarce, so it
+is made from slow motion: keeping every 8th frame of a 240 fps clip is exactly
+what the phone records at 30 fps, and every 4th is 60 fps. Each starting
+frame is a different real clip, so one slow-motion shot gives twelve
+normal-speed test cases, judged against its own slow-motion reading:
+
+```bash
+.venv/bin/shottracker fullspeed IMG_0198.MOV --distance 18.75
+```
+
+On the two real shots so far (backyard, phone on the ground behind and to the
+side of the shooter):
+
+| | Speed vs the slow-motion reading | Mark vs the slow-motion reading |
+| --- | --- | --- |
+| 60 fps, shot 2 (into the net) | within 2.2% in all 4 versions | 1.5–17 in |
+| 60 fps, shot 1 (just wide) | +2% to −16% | within 2.5 in |
+| 30 fps, both | −33% to +88%, typically 10–20% | 0.4–110 in |
+
+30 fps is not good enough to be trusted, and no amount of processing will make
+it so: a 40 mph shot moves about two feet between frames, and from one camera
+*where* along its path the puck is has to come from the timing of those few
+frames. 60 fps (normal video mode, not slow motion: Settings → Camera →
+Record Video → 1080p at 60 fps) is where accuracy starts to hold.
+
+What decides accuracy at normal speed was measured on synthetic backyard
+scenes with exact answers, six shots per setup:
+
+| Phone placement | 30 fps speed / mark (mean) | 60 fps speed / mark (mean) |
+| --- | --- | --- |
+| On the ground behind and beside the shooter (the real clips) | 14% / 7 in | 8% / 8 in |
+| Chest height, behind the shooter at about 45° | 7% / 10 in | 4% / 6 in |
+| Chest height, to the side of the shooting lane | 8% / 42 in | 5% / 22 in |
+
+**Speed at normal frame rates is timed at the goal line.** The speed estimate
+needs to know where the flight ends. It used to be where the puck was last
+seen, which at 30 fps can be a yard short of the goal line, or, for a puck
+that goes in, at the back of the net. Now the fractions-along-the-flight
+fit works out *when* the puck reached the goal line and uses where it was in
+the picture at that moment, where the goal-plane mapping is exact. From
+straight behind the shooter that timing is too weakly measured to help, so it
+is used only when the camera sees the flight at least 25° off its line. On the
+benchmark it takes the side and angled cameras from 1.1% and 1.9% to 0.7% and
+1.2%; the marks themselves still come from the last sighting, because moving
+them by the same timing made them worse at 30 fps.
+
+Two approaches were tried and set aside, for reasons worth keeping:
+
+- **A full 3-D fit of the flight** (start on the ice at the shooting distance,
+  gravity, every sighting): the camera position worked out from the goal is
+  accurate near the goal but not 20 ft away at the shooter, where the true
+  start of the flight lands 75 px from where that camera puts it. The fit
+  followed the camera's error, not the puck.
+- **A straight path from the shooting spot through the late sightings**: every
+  sighting lies in one sheet through the camera, so any path in that sheet
+  fits them all. Only timing says where along it the puck crossed the line.
 
 ## What real footage showed
 

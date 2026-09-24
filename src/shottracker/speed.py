@@ -95,6 +95,52 @@ def _closest_param_on_segment(origin, dirs, a: np.ndarray, b: np.ndarray) -> np.
     return out
 
 
+def goal_line_crossing(
+    track: Track, plane: GoalPlane, cam: CameraModel, cfg: Config, first_guess: np.ndarray, iterations: int = 8
+) -> tuple[np.ndarray, float] | None:
+    """When the puck reached the goal line, and so where on the net it was.
+
+    The goal-plane mapping is exact for a point on the goal line and wrong for
+    one in front of it or behind it -- and at 30 fps the last sighting can be a
+    yard short of the line, while a puck that goes in keeps sliding to the back
+    of the net.  So work out *when* it crossed, from how fast it was closing
+    on the line (the same fractions-along-the-flight as ``time_of_flight``),
+    and map where the puck was in the picture at that moment.  Sightings
+    already past the line are left out of the timing: in the mesh the puck
+    slows down.
+    """
+    scfg = cfg.speed
+    if scfg.shot_distance_ft is None or len(track) < 3:
+        return None
+    release = np.array([scfg.shooter_offset_ft * 12.0, scfg.release_height_in, scfg.shot_distance_ft * 12.0])
+    origin, dirs = _rays(cam, track.points)
+    frames = track.frames.astype(float)
+    xy = np.asarray(first_guess, dtype=float)
+    f_cross = float(frames[-1])
+    for _ in range(iterations):
+        s = _closest_param_on_segment(origin, dirs, release, np.array([xy[0], xy[1], 0.0]))
+        use = np.isfinite(s) & (s <= 1.02)
+        if use.sum() < 3:
+            return None
+        slope, intercept = np.polyfit(frames[use], s[use], 1)
+        if slope <= 1e-9:
+            return None
+        f_cross = float(np.clip((1.0 - intercept) / slope, frames[0], frames[-1] + 1.5))
+        if f_cross <= frames[-1]:
+            img = np.array([np.interp(f_cross, frames, track.points[:, 0]),
+                            np.interp(f_cross, frames, track.points[:, 1])])
+        else:
+            img = track.position_at(f_cross)
+        new = plane.to_goal(img.reshape(1, 2))[0]
+        if not np.all(np.isfinite(new)):
+            return None
+        done = np.hypot(*(new - xy)) < 0.05
+        xy = new
+        if done:
+            break
+    return xy, f_cross
+
+
 def estimate_time_of_flight(
     track: Track,
     cam: CameraModel,

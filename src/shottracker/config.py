@@ -258,6 +258,13 @@ class ShotConfig:
     below_ice_margin_in: float = 8.0
     # Sub-frame extrapolation past the last detection, in frames.
     impact_extrapolation_frames: float = 0.5
+    # Place the mark where the puck reached the goal line, timed from how fast
+    # it was closing on it, rather than where it was last seen.
+    time_the_crossing: bool = True
+    # ...but only when the camera sees the flight from at least this far off
+    # its line.  From straight behind the shooter, how fast the puck closes on
+    # the goal line barely shows, and the timing is worse than none.
+    min_view_angle_for_timing_deg: float = 25.0
     # Two impacts closer together than this are one shot plus its aftermath
     # (a rebound, or the netting still moving).  Seconds, not frames: at
     # 240 fps a count of frames is an eighth of the time it is at 30 fps.
