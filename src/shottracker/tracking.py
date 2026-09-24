@@ -184,8 +184,8 @@ def build_tracks(
     if len(seeds) > tcfg.max_seeds:
         notes.append(
             f"{len(seeds):,} possible puck pairings were found, far more than a clean clip "
-            f"produces; only the {tcfg.max_seeds:,} strongest were followed. This nearly always "
-            "means the camera moved, so everything in frame looks like it is in motion."
+            f"produces; only the {tcfg.max_seeds:,} strongest were followed, so a shot may have "
+            "been missed among them."
         )
         seeds = seeds[: tcfg.max_seeds]
 

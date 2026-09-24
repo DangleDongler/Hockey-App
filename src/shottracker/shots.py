@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 
 from .camera import CameraModel
 from .config import Config
-from .geometry import GoalPlane, Zone, build_zones, point_in_mouth, zone_for
+from .geometry import GoalPlane, Zone, build_zones, outer_outline, point_in_mouth, zone_for
 from .speed import SpeedEstimate, estimate_speed
 from .tracking import Track
 
@@ -105,6 +106,28 @@ def _classify(
     return "miss", None, " and ".join(parts) if parts else "wide"
 
 
+def approaches_goal(track: Track, plane: GoalPlane, cfg: Config) -> bool:
+    """Whether a trajectory arrives at the goal from somewhere else.
+
+    Measured on screen, in goal widths outside the goal's outline.  Tracks
+    that begin on the frame itself -- a post glinting, the netting swaying
+    after a puck hits it, a rebound dropping out -- are not shots, however
+    neatly they line up.
+    """
+    if len(track) == 0:
+        return False
+    outline = plane.to_image(outer_outline(plane.goal)).astype(np.float32).reshape(-1, 1, 2)
+    width_px = float(np.linalg.norm(plane.image_quad[1] - plane.image_quad[0]))
+    if width_px <= 0:
+        return True
+
+    def outside(p: np.ndarray) -> float:
+        return -cv2.pointPolygonTest(outline, (float(p[0]), float(p[1])), True) / width_px
+
+    start, end = outside(track.points[0]), outside(track.points[-1])
+    return start >= cfg.shot.min_start_outside_goal and start - end >= cfg.shot.min_approach_goal
+
+
 def shot_from_track(
     index: int,
     track: Track,
@@ -166,23 +189,39 @@ def shot_from_track(
     )
 
 
-def dedupe_shots(shots: list[Shot], cfg: Config) -> list[Shot]:
+MERGED = "merged with a near-simultaneous trajectory (likely a rebound)"
+AFTERMATH = "ignored movement at the net straight after the impact"
+
+
+def _note(shot: Shot, text: str) -> None:
+    if text not in shot.notes:
+        shot.notes.append(text)
+
+
+def dedupe_shots(shots: list[Shot], cfg: Config, fps: float) -> list[Shot]:
     """Collapse trajectories that are really one shot seen twice (e.g. a rebound)."""
     if not shots:
         return []
     shots = sorted(shots, key=lambda s: s.impact_frame)
+    min_gap_frames = cfg.shot.min_shot_separation_s * fps
     kept: list[Shot] = [shots[0]]
     for s in shots[1:]:
         prev = kept[-1]
         # One player cannot have two pucks in the air at the same time, so
-        # overlapping flights are one shot whose track came apart.
-        overlaps = s.first_tracked_frame <= prev.impact_frame
-        if overlaps or s.impact_frame - prev.impact_frame < cfg.shot.min_shot_separation_frames:
+        # overlapping flights are one shot whose track came apart: keep
+        # whichever piece was followed better.
+        if s.first_tracked_frame <= prev.impact_frame:
             if s.quality > prev.quality:
-                s.notes.append("merged with a near-simultaneous trajectory (likely a rebound)")
+                _note(s, MERGED)
                 kept[-1] = s
             else:
-                prev.notes.append("merged with a near-simultaneous trajectory (likely a rebound)")
+                _note(prev, MERGED)
+            continue
+        # Something that starts after an impact and lands straight after it is
+        # the impact's aftermath -- a rebound, the netting moving -- never a
+        # better view of the shot, however cleanly it happened to be tracked.
+        if s.impact_frame - prev.impact_frame < min_gap_frames:
+            _note(prev, AFTERMATH)
             continue
         kept.append(s)
     for i, s in enumerate(kept):

@@ -17,11 +17,12 @@ import numpy as np
 
 from .camera import CameraModel, calibrate_from_homography
 from .config import PUCK_DIAMETER_IN, Config
+from .container import detect_slow_motion, read_timing
 from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
 from .net_detect import NetDetection, detect_net
 from .puck_detect import Candidate, PuckDetector, build_background
-from .shots import Shot, dedupe_shots, shot_from_track
-from .stabilize import CameraMotion, interpolate, measure
+from .shots import Shot, approaches_goal, dedupe_shots, shot_from_track
+from .stabilize import CameraMotion, estimate_motion, interpolate, measure
 from .tracking import Track, build_tracks, filter_by_speed
 
 
@@ -30,9 +31,14 @@ class VideoInfo:
     path: str
     width: int
     height: int
-    fps: float
+    fps: float                  # frames per second of real time: what timing uses
     frame_count: int
     fps_source: str = "container"
+    # The rate the file plays at, when that differs from the rate it was filmed
+    # at (slow motion with the slowdown baked in).  Anything that seeks in or
+    # re-encodes the file itself goes by this, not by ``fps``.
+    playback_fps: float | None = None
+    notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -40,6 +46,7 @@ class VideoInfo:
             "width": self.width,
             "height": self.height,
             "fps": round(self.fps, 3),
+            "playback_fps": round(self.playback_fps, 3) if self.playback_fps else None,
             "frame_count": self.frame_count,
             "duration_s": round(self.frame_count / self.fps, 2) if self.fps else None,
             "fps_source": self.fps_source,
@@ -161,6 +168,46 @@ def _capture_warnings(info: VideoInfo, cfg: Config) -> list[str]:
     return out
 
 
+def _busy_scene_warning(
+    saturated: float, samples: list[np.ndarray], scale: float, already_aligned: bool, cfg: Config
+) -> str:
+    """Say why most frames were full of moving things, having checked.
+
+    Two different problems look the same to the puck detector: a camera that
+    moved, so the whole scene slid against the background plate, and a steady
+    camera watching a scene that will not keep still -- wind in leaves and
+    netting, flickering sunlight, people.  The fixes differ, so measure which
+    it was on the frames already sampled for the plate instead of guessing.
+    """
+    head = f"{saturated:.0%} of frames were full of moving objects, so the puck is hard to pick out. "
+    drift = None
+    if not already_aligned and len(samples) >= 2:
+        s2 = min(1.0, 320.0 / float(samples[0].shape[1]))
+        grays = {
+            i: cv2.cvtColor(cv2.resize(f, None, fx=s2, fy=s2, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+            for i, f in enumerate(samples)
+        }
+        ref = grays[len(grays) // 2]
+        est = estimate_motion(ref, grays, scale=scale * s2)
+        weak = sum(1 for _, resp in est.values() if resp < 0.12)
+        shifts = [abs(dx) + abs(dy) for (dx, dy), resp in est.values() if resp >= 0.12]
+        drift = (max(shifts) if shifts else 0.0, weak / max(len(est), 1))
+
+    if drift is not None and drift[0] <= cfg.puck.stabilize_drift_threshold_px and drift[1] < 0.25:
+        return head + (
+            "The camera held still, so it was the scene itself moving: wind in trees or netting, "
+            "sunlight flickering, people walking through. Filming with the sun behind the phone and "
+            "less moving background in frame helps most."
+        )
+    if drift is None:
+        how = "The camera moved during the clip"
+    elif drift[1] >= 0.25:
+        how = "The view kept changing, as when a phone is carried or panned"
+    else:
+        how = f"The camera moved during the clip, by up to {drift[0]:.0f} px"
+    return head + how + "; prop the phone against something steady rather than holding it."
+
+
 def probe(path: str, cfg: Config) -> VideoInfo:
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
@@ -173,12 +220,21 @@ def probe(path: str, cfg: Config) -> VideoInfo:
     finally:
         cap.release()
 
-    source = "container"
+    info = VideoInfo(path=path, width=width, height=height, fps=fps, frame_count=max(count, 0))
     if cfg.fps_override:
-        fps, source = float(cfg.fps_override), "override"
+        info.fps, info.fps_source = float(cfg.fps_override), "override"
     elif fps <= 1.0:
-        fps, source = 30.0, "assumed"
-    return VideoInfo(path=path, width=width, height=height, fps=fps, frame_count=max(count, 0), fps_source=source)
+        info.fps, info.fps_source = 30.0, "assumed"
+    else:
+        slow = detect_slow_motion(read_timing(path), fps)
+        if slow.capture_fps:
+            info.fps, info.fps_source = slow.capture_fps, "slow-motion"
+        if slow.note:
+            info.notes.append(slow.note)
+    if fps > 1.0 and abs(info.fps - fps) > 0.01 * fps:
+        # Timing now runs at a different rate from the file itself.
+        info.playback_fps = fps
+    return info
 
 
 def sample_frames(path: str, n: int, total: int) -> list[np.ndarray]:
@@ -218,6 +274,7 @@ def analyze(
 
     if info.fps_source == "assumed":
         warnings.append("the file did not report a usable frame rate; assumed 30 fps, so speeds are unreliable")
+    warnings.extend(info.notes)
 
     def report(stage: str, frac: float) -> None:
         if progress:
@@ -330,23 +387,32 @@ def analyze(
         1 for v in cands_by_frame.values() if len(v) >= cfg.puck.max_candidates_per_frame
     ) / max(len(cands_by_frame), 1)
     if saturated > cfg.puck.saturated_frame_warn_frac:
-        warnings.append(
-            f"{saturated:.0%} of frames were full of moving objects, which means the background "
-            "model is not holding. The usual cause is a camera that was hand-held rather than "
-            "propped up; puck detections will be unreliable."
-        )
+        warnings.append(_busy_scene_warning(saturated, small_samples, scale, motion.needed, cfg))
     tracks = build_tracks(cands_by_frame, goal_width_px, cfg, warnings)
     tracks = filter_by_speed(tracks, goal_width_px, info.fps, cfg)
 
     zones = build_zones(cfg.goal)
     shots: list[Shot] = []
-    kept_tracks: list[Track] = []
+    track_of: dict[int, Track] = {}
+    started_at_goal = 0
     for t in tracks:
+        if not approaches_goal(t, plane, cfg):
+            started_at_goal += 1
+            continue
         s = shot_from_track(len(shots), t, plane, cam, info.fps, cfg, zones)
         if s is not None:
             shots.append(s)
-            kept_tracks.append(t)
-    shots = dedupe_shots(shots, cfg)
+            track_of[id(s)] = t
+    shots = dedupe_shots(shots, cfg, info.fps)
+    # One trail per reported shot, in the same order, so a trail is never
+    # drawn for something that was merged away.
+    kept_tracks = [track_of[id(s)] for s in shots]
+
+    if started_at_goal:
+        warnings.append(
+            f"not counted as shots: {started_at_goal} bit(s) of movement that started on the goal itself, "
+            "such as the posts glinting or the netting moving. A shot has to come from somewhere."
+        )
 
     if not shots:
         if tracks:

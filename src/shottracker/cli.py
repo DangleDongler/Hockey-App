@@ -152,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--offset", type=float, metavar="FT",
                    help="how far the shooter stands to the side of net centre, in feet "
                         "(negative = the shooter's left)")
-    a.add_argument("--fps", type=float, help="override the clip's frame rate (slow-motion files often lie)")
+    a.add_argument("--fps", type=float, help="override the frame rate the clip was filmed at. Slow motion with the "
+                   "slowdown baked in is usually detected from the sound; use this when it is not")
     a.add_argument("--speed-method", choices=["auto", "time_of_flight", "ballistic_3d", "goal_plane"],
                    default="auto")
     a.add_argument("--hfov", type=float, metavar="DEG",

@@ -267,7 +267,8 @@ function escapeHtml(s) {
 
 function seekToFrame(frame) {
   const video = $("video");
-  const fps = state.result?.video?.fps;
+  // Seeking goes by the rate the file plays at, which slow motion makes lower than the rate it was filmed at.
+  const fps = state.result?.video?.playback_fps || state.result?.video?.fps;
   if (!fps || !Number.isFinite(video.duration)) return;
   video.currentTime = Math.max(0, frame / fps - 0.15);
   video.pause();
@@ -780,7 +781,7 @@ function drawOverlay() {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const fps = r.video.fps || 30;
+    const fps = r.video.playback_fps || r.video.fps || 30;
     const frame = Math.round((video.currentTime || 0) * fps);
 
     if (r.net?.quad) drawNet(ctx, r, $("show-zones").checked);

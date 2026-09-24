@@ -127,9 +127,15 @@ The results panel reports the camera distance it derived from your marking.
 That number is the check: if it says the camera was 40 ft away and you know it
 was 25, the wrong rectangle was marked.
 
-If you shoot slow-motion, check that the file reports the real rate — many
-phones write 30 fps into a 240 fps file — and pass `--fps` if it does not.
-Every speed scales directly with it.
+Slow motion often arrives with the slowdown baked in: when an iPhone shares a
+240 fps clip it can turn one real second into eight seconds of ordinary 30 fps
+video. The app catches this from the sound, which is not slowed: eight seconds
+of picture over one second of sound means it was filmed at 240. It then times
+everything at 240 and says so in the notes. If only part of the clip is slowed
+(a normal-speed start or end), the numbers match no filming rate and it says
+that instead of guessing; trim the clip to the slow part, or pass `--fps`.
+Every speed scales directly with the rate, so it is worth a glance at the
+first line of the report.
 
 ## How accurate is it
 
@@ -298,7 +304,8 @@ server/app.py       upload a clip, poll a job, fetch the result
 web/                the browser app: canvas overlay on the original video, interactive shot chart
   stabilize.py      optional motion compensation (off by default, see below)
   targets.py        scoring shots against what the player was aiming at
-tests/              105 tests, including end-to-end accuracy against ground truth
+  container.py      reads a video file's own track timing, to catch baked-in slow motion
+tests/              124 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
@@ -354,10 +361,51 @@ rather than a moving camera, and resampling blur pushed more pixels over the
 difference threshold. It stays available, unproven, until there is footage that
 shows it helping.
 
+### The first slow-motion clip
+
+One wrist shot, filmed at 240 fps by a phone propped on the ground about 27 ft
+from the net and 12 ft to the side, looking into the sun past the shooter. The
+shooter stood 225 in (18 ft 9 in) from the goal line.
+
+| | By hand, frame by frame | The app |
+| --- | --- | --- |
+| Release → impact | frame 130 → 209, 79 frames = 0.33 s | — |
+| Speed | 18.75 ft / 0.33 s = 39 mph | 39.0 mph ± 4.1 |
+| Where | just outside the right post, about 2 ft up | 0.6 ft wide right, 24 in up |
+| Net | — | found on its own, 24 of 24 sampled frames agreeing |
+
+The puck was dark and sharp against bright concrete in every frame of its
+flight, even with the sun in shot, and the track began with the blade dragging
+it -- so a stick travelling with the puck at release did not throw the speed.
+
+What it changed in the code:
+
+- **Slow motion is recognised from the sound.** The phone shared the clip as
+  8.4 s of 30 fps video with 1.1 s of sound. Read naively, every speed comes
+  out 8x too slow. See *Filming* above.
+- **A shot has to come from somewhere.** After the impact the netting kept
+  moving, and two bits of that motion were tracked and reported as shots, one
+  at 223 mph. Tracks must now first appear at least a quarter of a goal width
+  outside the goal and move toward it. On the synthetic benchmark this changes
+  nothing; on this clip it set aside 337 bits of movement on the goal itself.
+- **Shots are spaced in seconds, not frames.** The rule merging an impact with
+  whatever follows it was eight frames: a quarter second at 30 fps, a
+  thirtieth at 240. It is now a quarter second at any rate, and what follows
+  an impact never replaces the shot however cleanly it was tracked.
+- **"Lots of motion" is diagnosed, not assumed.** The report used to blame a
+  hand-held camera whenever most frames were busy. It now measures camera
+  drift on the frames already sampled, and here says correctly that the phone
+  held still and the scene itself was moving.
+
+The same rules on a 2½-minute session from the same spot at ordinary 30 fps
+cut the reported shots from 71 to 27, but most of those 27 are still not
+shots. At that rate and distance the puck is a few pixels for a handful of
+frames, and the scene never kept still (the report now says exactly that).
+Footage like it needs slow motion, or a camera nearer the net and off to the
+side with the sun behind it.
+
 Still untested on real video, and next in line:
 
-- **The shooter in frame.** A stick blade travelling with the puck at release
-  is the case to watch.
 - **Rebounds and multiple pucks.** A second trajectory overlapping the first is
   merged as a rebound; two pucks genuinely in the air need real multi-target
   tracking.

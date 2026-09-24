@@ -253,7 +253,19 @@ class ShotConfig:
     below_ice_margin_in: float = 8.0
     # Sub-frame extrapolation past the last detection, in frames.
     impact_extrapolation_frames: float = 0.5
-    min_shot_separation_frames: int = 8
+    # Two impacts closer together than this are one shot plus its aftermath
+    # (a rebound, or the netting still moving).  Seconds, not frames: at
+    # 240 fps a count of frames is an eighth of the time it is at 30 fps.
+    min_shot_separation_s: float = 0.25
+    # A shot comes from somewhere.  Its first sighting has to be at least this
+    # far outside the goal's outline, and it has to end nearer the goal than it
+    # started, both in goal widths on screen.  Posts glinting and netting that
+    # sways after an impact make tracks that start at the goal and never
+    # approach it; a puck leaving a stick starts well away.  Small enough to
+    # hold for a camera low and straight behind the shooter, where a whole
+    # shot covers less than half a goal width.
+    min_start_outside_goal: float = 0.25
+    min_approach_goal: float = 0.15
 
 
 @dataclass

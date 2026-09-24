@@ -53,7 +53,8 @@ def render_overlay(result: SessionResult, out_path: str, *, trail_frames: int = 
     writer = cv2.VideoWriter(
         out_path,
         cv2.VideoWriter_fourcc(*"mp4v"),
-        result.video.fps,
+        # The copy plays at the same pace as the original, slow motion included.
+        result.video.playback_fps or result.video.fps,
         (result.video.width, result.video.height),
     )
     if not writer.isOpened():

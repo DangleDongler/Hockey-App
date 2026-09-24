@@ -179,7 +179,9 @@ def format_text_report(result: "SessionResult") -> str:
     s = summarize(result)
     lines: list[str] = []
     v = result.video
-    lines.append(f"Clip      {v.width}x{v.height} @ {v.fps:.1f} fps ({v.fps_source}), {v.frame_count} frames")
+    rate = (f"{v.fps:.0f} fps (slow motion, plays at {v.playback_fps:.0f})" if v.playback_fps
+            else f"{v.fps:.1f} fps ({v.fps_source})")
+    lines.append(f"Clip      {v.width}x{v.height} @ {rate}, {v.frame_count} frames")
     if result.net:
         lines.append(f"Net       found by {result.net.method}, confidence {result.net.confidence:.0%} "
                      f"({result.net.frames_used}/{result.net.frames_tried} frames agreed)")
