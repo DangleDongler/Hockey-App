@@ -39,6 +39,14 @@ FOCAL_JITTER_SAMPLES = 24
 # the ground, reading speeds 20-65% off.
 PLANAR_FIT_TOL = 0.0075
 CAMERA_MIN_HEIGHT_IN = -12.0
+# ...and only where a pixel's error in the crossbar's height (or the posts'
+# feet) moves the fitted camera less than this.  That is the outline's
+# commonest error on real clips -- the bar or the netting just under it,
+# grass over the feet -- and the homography's pose, scaled by the goal's
+# width, hardly feels it (1-2 in), where a fit from far and low swings by a
+# foot or more: with it, the real clips' 60 fps copies spread 7.1% on speed
+# at the median instead of 5.4%, and 43% at worst instead of 25%.
+PLANAR_MAX_HEIGHT_SENSITIVITY_IN = 6.0
 
 
 @dataclass
@@ -213,9 +221,11 @@ def _planar_pose(corners_goal, corners_image, K: np.ndarray) -> tuple[np.ndarray
 
     But only if the corners fit a goal of the size given at all (see
     PLANAR_FIT_TOL): when they do not, the best fit explains the mismatch by
-    tilting the view, and the camera ends up feet underground.  Then the
-    homography's answer, which takes its scale from the goal's width alone,
-    is the better one, and None says to keep it.
+    tilting the view, and the camera ends up feet underground.  And only if
+    the view is not so far and low that an error in the crossbar's height
+    swings the fit (see PLANAR_MAX_HEIGHT_SENSITIVITY_IN).  Otherwise the
+    homography's answer, which takes its scale from the goal's width, is the
+    better one, and None says to keep it.
     """
     fit = planar_fit(corners_goal, corners_image, K)
     if fit is None:
@@ -226,6 +236,11 @@ def _planar_pose(corners_goal, corners_image, K: np.ndarray) -> tuple[np.ndarray
     if not np.isfinite(rms) or rms > PLANAR_FIT_TOL * width_px:
         return None
     if (-R.T @ t)[1] < CAMERA_MIN_HEIGHT_IN:
+        return None
+    lowered = ci.copy()
+    lowered[:2, 1] += 1.0                          # the top corners, a pixel down
+    moved = planar_fit(corners_goal, lowered, K)
+    if moved is None or np.linalg.norm((-moved[0].T @ moved[1]) - (-R.T @ t)) > PLANAR_MAX_HEIGHT_SENSITIVITY_IN:
         return None
     return R, t
 

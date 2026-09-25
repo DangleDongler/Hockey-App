@@ -140,3 +140,19 @@ def test_the_outline_says_how_tall_the_goal_really_is():
     entered, height, best = outline_height_fit(quad, K, GoalSpec())
     assert height == pytest.approx(41.0, abs=1.0)
     assert best < entered
+
+
+def test_from_far_and_low_the_pose_keeps_to_the_goals_width():
+    """From the ground 27 ft out a pixel's error in the crossbar swings a pose
+    fitted to the corners by 8 in, and real outlines err most in just that
+    way; the homography's pose, scaled by the goal's width, moves under 2."""
+    from shottracker.camera import _planar_pose
+
+    cam = camera_preset("backyard", 1080, 1920)
+    quad = cam.project(np.hstack([outer_rect(GoalSpec()), np.zeros((4, 1))]))
+    K = np.array([[cam.fx, 0.0, cam.cx], [0.0, cam.fy, cam.cy], [0.0, 0.0, 1.0]])
+    assert _planar_pose(outer_rect(GoalSpec()), quad, K) is None
+    near = camera_preset("angled")
+    quad = near.project(np.hstack([outer_rect(GoalSpec()), np.zeros((4, 1))]))
+    K = np.array([[near.fx, 0.0, near.cx], [0.0, near.fy, near.cy], [0.0, 0.0, 1.0]])
+    assert _planar_pose(outer_rect(GoalSpec()), quad, K) is not None

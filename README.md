@@ -601,7 +601,7 @@ for normal phone video:
 | | Before | After |
 | --- | --- | --- |
 | Ground: shots found | 17 of 20 | 19 of 20, nothing made up |
-| Ground: speed, median / worst | 2.0% / 5.1% | 1.3% / 4.9% |
+| Ground: speed, median / worst | 2.0% / 5.1% | 0.8% / 4.0% |
 | Ground: mark, median / worst | 1.8 / 6.3 in | 2.4 / 6.3 in (two more, harder, shots found) |
 | Chest height: shots found | 20 of 20 | 20 of 20, nothing made up |
 | Chest height: speed, median / worst | 4.8% / 17.2% | 4.1% / 6.4% |
@@ -622,7 +622,14 @@ What changed:
   camera's speed error from +4.8% to -2.2% when timed against the true
   impact. With the lens solved from the outline instead, the homography's
   pose stays: it is the one consistent with that solve, and fitting on top
-  of it made the benchmark worse.
+  of it made the benchmark worse. It also stays where the view is far and
+  low: there a pixel's error in the crossbar's height -- the outline's
+  commonest error on real clips -- swings the fitted camera by 8-15 in, while
+  the homography's pose, scaled by the goal's width, moves 1-2 in. Fitting
+  the real clips (entered at the size their outlines fit) spread their 60 fps
+  copies 7.1% on speed at the median instead of 5.4%, and 43% at worst
+  instead of 25%. So the fit is used only where a crossbar pixel moves it
+  less than 6 in.
 - **The net's size is checked.** A goal's proportions can be read from its
   outline once the lens is known. Every real clip so far, entered as 72 x 48,
   fits a goal about 72 x 40-42 in to a pixel or less, against 2.5-5 px for
@@ -630,8 +637,7 @@ What changed:
   out, where 72 x 48 puts it nine feet underground. Either that net is
   smaller than regulation or its outline is found short (grass over the
   bottom of the posts, or the crossbar's lower edge). The report now says
-  so; until it is settled, fitting the pose to those corners would make
-  things worse, so it is only done when the outline fits the size entered.
+  so. The pose is only fitted to corners that fit the size entered.
 - **Crowded clutter ranks last.** A bush in the wind is dozens of leaves that
   each move too far to count as recurring, and they took every place under
   the per-frame cap from a puck crossing open ground. Candidates in a crowd
