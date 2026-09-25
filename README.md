@@ -646,7 +646,12 @@ What changed:
   the notes say how much was hidden. On the three clips it applies to, the
   speeds now read 39.7, 46.9 and 50.7 mph against 39, 47 and 50 timed by
   hand, and marks sit a few inches higher, where the bottom of the net
-  really is. The pose is only fitted to corners that fit the size entered.
+  really is. On a synthetic lawn with 7 in of grass (`grass_in`), the feet
+  come out 15-16 px high without this and within 3 px with it, and the marks
+  go from 2.7-6.4 in off to 1.3-4.8. It needs the lens: without it the lens
+  is worked out from the same short outline, speeds there read 7-10% high,
+  and the notes now ask for the lens. The pose is only fitted to corners
+  that fit the size entered.
 - **Crowded clutter ranks last.** A bush in the wind is dozens of leaves that
   each move too far to count as recurring, and they took every place under
   the per-frame cap from a puck crossing open ground. Candidates in a crowd

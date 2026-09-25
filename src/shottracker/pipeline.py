@@ -540,6 +540,16 @@ def analyze(
             "typical phone lens was assumed and speed carries a few percent of extra error; pass "
             "your camera's field of view, or move the camera further to one side, to remove the guess"
         )
+    elif not known:
+        # Solved from the outline itself, which grass hiding the posts' feet
+        # throws off: on a synthetic lawn the lens came out wrong enough to
+        # read speeds 7-10% high, and the hidden strip cannot be measured.
+        what = "Slow motion does not record which lens filmed it" if info.fps_source == "slow-motion" \
+            else "The video did not say which lens filmed it"
+        warnings.append(
+            f"{what}, so it was worked out from the net's outline, which grass over the bottom of the "
+            "posts can throw off by 10-15% and the speeds with it. Pick the lens you filmed with in the form"
+        )
 
     report("checking for camera drift", 0.2)
     motion = CameraMotion()
