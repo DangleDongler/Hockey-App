@@ -111,12 +111,13 @@ These are ordered by how much they actually decide whether a clip can be read
 at all. The first one is not a nicety — at 30 fps most shots are simply not in
 the footage.
 
-1. **Record in slow motion — 120 or 240 fps.** A puck only exists on camera for
-   `distance / speed` seconds. A 45 mph shot from 10 ft is in the air for about
-   a seventh of a second, which at 30 fps is *four frames*, of which the puck is
-   cleanly visible in one or two. The tracker needs at least four sightings and
-   wants eight. Every recent phone shoots 240 fps slow-motion; switching to it
-   turns four frames into thirty.
+1. **Record at 60 fps at least; slow motion (120 or 240 fps) is better
+   still.** A puck only exists on camera for `distance / speed` seconds. A 45
+   mph shot from 10 ft is in the air for about a seventh of a second, which at
+   30 fps is *four frames*, of which the puck is cleanly visible in one or two.
+   The tracker needs at least four sightings and wants eight. Ordinary 60 fps
+   video (Settings → Camera → Record Video) doubles that and records which lens
+   filmed it; slow motion multiplies it by eight but does not record the lens.
 
    | distance | 30 fps | 60 fps | 120 fps | 240 fps |
    | --- | --- | --- | --- | --- |
@@ -137,6 +138,10 @@ the footage.
 
 4. **Tell it how far out you were shooting** (`--distance`, in feet). Speed is
    directly proportional to it. Pacing it out is fine.
+
+   For slow motion, also give the lens's field of view (`--hfov`, or *Camera
+   details* in the web app): about 74° for the 0.5x lens held upright, 42° for
+   1x. Ordinary video records its lens and needs nothing.
 
 5. **Put the camera off to one side**, not directly behind you. Square-on to the
    net, the goal's outline reveals nothing about your lens and the tracker has
@@ -402,14 +407,27 @@ normal-speed test cases, judged against its own slow-motion reading:
 .venv/bin/shottracker fullspeed IMG_0198.MOV --distance 18.75
 ```
 
-On the two real shots so far (backyard, phone on the ground behind and to the
-side of the shooter):
+On four real slow-motion shots (backyard, phone lying on the ground about
+26 ft out and to the side, 0.5x lens), read at 240 fps and at every 60 and
+30 fps version of each:
 
 | | Speed vs the slow-motion reading | Mark vs the slow-motion reading |
 | --- | --- | --- |
-| 60 fps, shot 2 (into the net) | within 2.2% in all 4 versions | 1.5–17 in |
-| 60 fps, shot 1 (just wide) | +2% to −16% | within 2.5 in |
-| 30 fps, both | −33% to +88%, typically 10–20% | 0.4–110 in |
+| 60 fps, shot 1 (just wide) | −7% to +3% | 2–6 in |
+| 60 fps, shot 2 (into the net) | 0 to −21%; 2 of 4 within 0.3% | 1–17 in; 2 of 4 within 1.1 in |
+| 60 fps, shot 3 (over the bar) | −9% to +19%; 2 of 4 within 0.3% | 1–16 in; 3 of 4 within 5 in |
+| 60 fps, shot 4 (off the crossbar) | +1% to +11% | 1–4 in |
+| 30 fps, all four | −13% to +59% | 0.4–28 in; 6 of 32 versions read nothing |
+
+The copies are written losslessly: an earlier table here came from re-encoded
+copies, and the re-encoding alone blurred the small net's pipes and some
+pucks enough to change the result.
+
+The large misses at 60 fps have one cause. Seen from a phone far out and low,
+a puck that has crossed the goal line and is still travelling to the back of
+the net looks almost exactly like one still short of it, so where the track
+stops is not quite where it crossed. That is a property of the camera spot,
+not something more processing will fix: see *Where to put the phone* below.
 
 30 fps is not good enough to be trusted, and no amount of processing will make
 it so: a 40 mph shot moves about two feet between frames, and from one camera
@@ -449,7 +467,80 @@ Two approaches were tried and set aside, for reasons worth keeping:
   sighting lies in one sheet through the camera, so any path in that sheet
   fits them all. Only timing says where along it the puck crossed the line.
 
+### Where to put the phone
+
+The phone's position decides more than the frame rate does. From the ground
+26 ft out, the net is about a fifth of the frame wide, and its outline cannot
+say where the phone is: one or two pixels of error in its corners moves the
+worked-out camera anywhere from three feet underground to five feet up, and
+the speed with it. Better, in order:
+
+1. **Record at 60 fps** (normal video, not slow motion). Normal iPhone video
+   records which lens filmed it; the app reads that and no longer has to guess
+   the field of view. On the 0.5x lens this was worth 40% (see below).
+2. **Raise the phone** to chest height (a chair, a bag on a bench, a tripod)
+   so the net is seen from above rather than edge-on.
+3. **Bring it closer to the net and off to the side, about 45° from the
+   shooting lane**, so the net fills a third or more of the frame width.
+
 ## What real footage showed
+
+### Four clips from the ground at 60 fps and in slow motion
+
+Two 4K clips at 60 fps and two 240 fps slow-motion clips, all from a phone on
+the ground about 26 ft from the net, on the 0.5x lens, with sunlit trees and
+backstop netting behind the goal. At first the app misread every one of them:
+the wrong frame rate on both 60 fps clips, no net or a refused net on three,
+a speed of 85 mph on the one it did read, and three to four made-up shots per
+clip. Now each reads as exactly one shot, and the speeds agree with timing the
+flight frame by frame:
+
+| Clip | Hand-timed (release → net, 18.75 ft) | The app |
+| --- | --- | --- |
+| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 47.0 mph |
+| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 46.9 mph |
+| First slow-motion clip (below) | 39 mph | 38.2 mph |
+
+What each clip broke, and what changed:
+
+- **The 60 fps clips said they were 58.5 and 52.1 fps.** An iPhone's 60 fps
+  file starts with a few frames at 30 fps, which drags the file's average rate
+  down. The rate is now read from the frames' own timestamps.
+- **The net was refused as "the camera moved".** The posts' feet were found in
+  exactly the same place in every frame, but the top edge of the crossbar was
+  read two ways -- the bar, or a band of netting just under it. Now the feet
+  decide whether the camera held still, the crossbar is whatever most frames
+  agree on, and frames that simply failed to find the net (glare, the shooter
+  in the way) no longer count as the camera moving. Posts as short as 2.5% of
+  the frame are considered, so the small net in glare is found.
+- **The puck was found in every frame and still lost.** It ranked 7th to 25th
+  among ~90 moving things a frame -- sunlit leaves, rippling netting -- and
+  only the top 14 are followed. Anything seen in the same spot both just
+  before and just after is now ranked last: a puck passes any spot once. On
+  the 240 fps clip that let through all 60 puck sightings and demoted three
+  quarters of the clutter.
+- **Tracks bent by the drag before the release, or the drop into the net,
+  were thrown away whole.** They are now trimmed, from whichever end is
+  further off the line, down to the clean flight.
+- **Short lines of flicker were reported as shots**, 2–4 per clip. A shot now
+  needs 0.075 s worth of sightings (at least 3) in clear background. Measured
+  on every real clip at 30, 60 and 240 fps: every made-up shot had at most 3
+  such sightings, every real shot at 60 fps at least 7.
+- **The lens was 40% off.** Solved from the net's outline, the 0.5x lens came
+  out as 885 px instead of the 1426 px the file records; that put the camera
+  two feet up and nearly behind the shooter, and read the shot at 85 mph. With
+  the lens from the file it reads 47 mph. Slow motion does not record the lens,
+  so for slow motion give the field of view (`--hfov 74` for the 0.5x lens
+  held upright; about 42 for 1x). On the first slow-motion clip that takes the
+  speed from 42.6 to 38.2 mph against a hand-timed 39.
+
+Still open from these clips: on the two new slow-motion shots, the puck's
+release sits 12% and 23% behind where an 18.75 ft shot would start it, as if
+they were taken from 21–23 ft. Either the shooter stood further back, or
+something in that setup differs; until that is known their speeds (60 and
+56 mph) are not trusted.
+
+### The first real clip
 
 The accuracy table above is against rendered clips. The first real clip — a kid
 shooting into a backyard net, 540x960 at 30 fps, handheld, in direct afternoon
