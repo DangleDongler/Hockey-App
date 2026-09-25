@@ -87,7 +87,10 @@ class PuckDetector:
         self.max_area = max(self.min_area * 4.0, pcfg.max_area_mult * puck_area)
 
         self._mog = None
-        if pcfg.method == "mog2" or background is None:
+        # Whether detect() carries state from one frame to the next, and so
+        # must see frames one at a time, in order.
+        self.stateful = pcfg.method == "mog2" or background is None
+        if self.stateful:
             self._mog = cv2.createBackgroundSubtractorMOG2(
                 history=pcfg.mog_history, varThreshold=pcfg.mog_var_threshold, detectShadows=False
             )

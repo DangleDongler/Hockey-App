@@ -144,6 +144,8 @@ class PuckDetectConfig:
     # moved a synthetic shot's last sighting 5 px and its speed 7%.  Off:
     # full colour frames, shrunk the way the detector was tuned on.
     grey_decode: bool = False
+    # Frames searched at once (0: one per CPU core, up to 8).
+    workers: int = 0
     mog_history: int = 250
     mog_var_threshold: float = 28.0
 

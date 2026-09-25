@@ -154,6 +154,21 @@ def test_a_manual_net_outline_overrides_detection(angled_clip):
     assert len(result.shots) == len(angled_clip["shots"])
 
 
+def test_searching_frames_in_parallel_only_makes_it_faster(angled_result):
+    """Frames are searched for the puck several at a time; one at a time must
+    find exactly the same shots, marks and speeds."""
+    truth, result = angled_result
+    cfg = Config()
+    cfg.speed.shot_distance_ft = 20.0
+    cfg.puck.workers = 1
+    alone = analyze(truth["path"], cfg)
+
+    def shots(r):
+        return [(s.impact_frame, s.impact_goal_in, s.speed.mph if s.speed else None) for s in r.shots]
+
+    assert shots(alone) == shots(result)
+
+
 def test_result_serializes_to_json(angled_result):
     _, result = angled_result
     blob = json.dumps(result.to_dict())

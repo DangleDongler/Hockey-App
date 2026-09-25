@@ -251,6 +251,9 @@ def build_tracks(
         return None
 
     tracks: list[Track] = []
+    searched: dict = {}
+    # Slower on screen than this a frame, nothing salvaged would be a shot.
+    min_step = (tcfg.min_mean_speed_goalwidths_per_sec * gw / fps) if fps else 0.0
     for f1, i1, f2, i2 in seeds.tolist():
         if claimed[f1][i1] or claimed[f2][i2]:
             continue
@@ -275,7 +278,7 @@ def build_tracks(
         if fps is not None and fps >= cfg.track.straggler_min_fps:
             track = _without_stragglers(track, cfg)
         if not _accept(track, gw, cfg):
-            track = _straight_part(track, gw, cfg)
+            track = _straight_part(track, gw, cfg, min_step, searched)
         # Put back whatever was not kept, so a better seed can use it.
         keep = {id(c) for c in track.candidates} if track is not None else set()
         for f, k in newly:
@@ -396,7 +399,8 @@ def until_impact(track: Track, fps: float, cfg: Config, near_goal=None) -> Track
     return track
 
 
-def _straight_part(track: Track, goal_width_px: float, cfg: Config) -> Track | None:
+def _straight_part(track: Track, goal_width_px: float, cfg: Config, min_step: float = 0.0,
+                   seen: dict | None = None) -> Track | None:
     """The clean flight inside a track that bends at either end.
 
     Growing a track outward follows the puck wherever it goes: before a wrist
@@ -409,16 +413,84 @@ def _straight_part(track: Track, goal_width_px: float, cfg: Config) -> Track | N
     ends it peeled the wrong end and kept a stretch that stopped halfway to
     the net.  Less than half the track is not the same flight, so nothing
     shorter is looked for.
+
+    A long busy clip hands this hundreds of thousands of failed tracks, many
+    of them the same wandering track regrown from another seed, so: tracks
+    with no stretch fast enough to be a shot (``min_step`` px a frame) are
+    skipped, ones already searched are remembered in ``seen``, and for each
+    start the longest clean end is found by bisection.
     """
     cs = track.candidates
     n = len(cs)
     n_min = cfg.track.min_track_length
-    for length in range(n - 1, max(n_min, (n + 1) // 2) - 1, -1):
-        for start in range(n - length, -1, -1):
-            t = Track(list(cs[start : start + length]))
-            if _accept(t, goal_width_px, cfg):
-                return t
-    return None
+    lo = max(n_min, (n + 1) // 2)
+    if n - 1 < lo:
+        return None
+    key = None
+    if seen is not None:
+        key = tuple(id(c) for c in cs)
+        if key in seen:
+            return seen[key]
+    # Every stretch is judged in constant time from running sums -- a long
+    # clip can hand this hundreds of thousands of failed tracks.
+    p = np.array([[c.x, c.y] for c in cs], dtype=np.float64)
+    fr = np.array([c.frame for c in cs], dtype=np.float64)
+    step = np.diff(p, axis=0)
+    mag = np.linalg.norm(step, axis=1)
+    # No stretch of lo points covers more ground than the whole path, nor
+    # fewer than lo - 1 frames: if even that is too slow, none would pass.
+    if mag.sum() / (lo - 1) < min_step:
+        return None
+    good = mag > 1e-6
+    unit = np.where(good[:, None], step / np.where(good, mag, 1.0)[:, None], 0.0)
+    cu = np.vstack([[0.0, 0.0], np.cumsum(unit, axis=0)])            # over steps
+    cg = np.concatenate([[0], np.cumsum(good)])
+    c1 = np.vstack([[0.0, 0.0], np.cumsum(p, axis=0)])                 # over points
+    cxx = np.concatenate([[0.0], np.cumsum(p[:, 0] ** 2)])
+    cyy = np.concatenate([[0.0], np.cumsum(p[:, 1] ** 2)])
+    cxy = np.concatenate([[0.0], np.cumsum(p[:, 0] * p[:, 1])])
+    limit = cfg.track.max_line_residual_frac * goal_width_px
+
+    def clean(a: int, b: int) -> bool:           # points a .. b-1
+        if fr[b - 1] - fr[a] <= 0:
+            return False
+        overall = p[b - 1] - p[a]
+        norm = float(np.hypot(*overall))
+        count = int(cg[b - 1] - cg[a])
+        if norm < 1e-6 or count == 0:
+            return False
+        if float((cu[b - 1] - cu[a]) @ overall) / (norm * count) < 0.90:
+            return False
+        m = b - a
+        mx, my = (c1[b] - c1[a]) / m
+        sxx = (cxx[b] - cxx[a]) - m * mx * mx
+        syy = (cyy[b] - cyy[a]) - m * my * my
+        sxy = (cxy[b] - cxy[a]) - m * mx * my
+        half = 0.5 * (sxx + syy)
+        low = half - np.sqrt(max(0.25 * (sxx - syy) ** 2 + sxy * sxy, 0.0))
+        return float(np.sqrt(max(low, 0.0) / m)) <= limit
+
+    best: tuple[int, int] | None = None
+    for start in range(0, n - lo + 1):
+        end = start + lo
+        if not clean(start, end):
+            continue
+        top = min(n, start + n - 1)
+        while end < top:
+            mid = (end + top + 1) // 2
+            if clean(start, mid):
+                end = mid
+            else:
+                top = mid - 1
+        if best is None or end - start >= best[1] - best[0]:
+            best = (start, end)
+    found = None
+    if best is not None:
+        t = Track(list(cs[best[0] : best[1]]))
+        found = t if _accept(t, goal_width_px, cfg) else None   # the same test, spelled out
+    if seen is not None:
+        seen[key] = found
+    return found
 
 
 def _accept(track: Track, goal_width_px: float, cfg: Config) -> bool:

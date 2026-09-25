@@ -9,6 +9,7 @@ into a spot on the net.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -545,20 +546,52 @@ def analyze(
     # Keep everything for now when clutter is to be sorted out over the
     # whole clip; the per-frame cap is applied after that.
     raw_cap = cfg.puck.raw_candidates_per_frame if cfg.puck.demote_recurring else None
-    idx = 0
-    for frame in iter_frames(path, work_size if grey else None, gray=grey):
+    def one_frame(frame: np.ndarray, i: int) -> list[Candidate]:
         small = frame
         if not grey:
-            aligned = motion.compensate(frame, idx) if motion.needed else frame
+            aligned = motion.compensate(frame, i) if motion.needed else frame
             small = aligned
             if scale < 1.0:
                 small = cv2.resize(aligned, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        found = detector.detect(small, idx, limit=raw_cap)
-        if found:
-            cands_by_frame[idx] = found
-        idx += 1
-        if progress and info.frame_count and idx % 60 == 0:
-            report("tracking the puck", 0.3 + 0.5 * idx / max(info.frame_count, 1))
+        return detector.detect(small, i, limit=raw_cap)
+
+    # Frames are independent against a fixed plate, and OpenCV lets go of
+    # Python while it works, so several are shrunk and searched at once
+    # while the next ones decode.  The background-subtractor fallback keeps
+    # state from frame to frame and so stays one at a time.
+    workers = 1 if detector.stateful else max(1, min(cfg.puck.workers or (os.cpu_count() or 1), 8))
+    idx = 0
+    frames_in = iter_frames(path, work_size if grey else None, gray=grey)
+    if workers == 1:
+        for frame in frames_in:
+            found = one_frame(frame, idx)
+            if found:
+                cands_by_frame[idx] = found
+            idx += 1
+            if progress and info.frame_count and idx % 60 == 0:
+                report("tracking the puck", 0.3 + 0.5 * idx / max(info.frame_count, 1))
+    else:
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pending: deque = deque()
+
+            def collect() -> None:
+                i, fut = pending.popleft()
+                found = fut.result()
+                if found:
+                    cands_by_frame[i] = found
+
+            for frame in frames_in:
+                pending.append((idx, pool.submit(one_frame, frame, idx)))
+                idx += 1
+                while len(pending) > 2 * workers:
+                    collect()
+                if progress and info.frame_count and idx % 60 == 0:
+                    report("tracking the puck", 0.3 + 0.5 * idx / max(info.frame_count, 1))
+            while pending:
+                collect()
     if idx and idx != info.frame_count:
         info.frame_count = idx
 
