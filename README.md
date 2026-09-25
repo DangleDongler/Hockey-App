@@ -183,9 +183,9 @@ exactly. Reproduce with `shottracker benchmark`:
 camera         net   shots   on-net  off-net   zones    speed   worst  in bars
            % width   found   inches   inches   right   mean %       %
 ------------------------------------------------------------------------------
-side          0.65     4/4      1.3      6.5     4/4      1.1     3.0      4/4
-angled        0.87     4/4      0.6      3.5     4/4      1.9     3.2      4/4
-head_on       0.33     4/4      0.3      1.1     4/4      1.8     3.6      4/4   (lens assumed)
+side          0.65     4/4      1.3      6.5     4/4      0.6     0.8      4/4
+angled        0.87     4/4      0.6      3.5     4/4      1.0     2.1      4/4
+head_on       0.35     4/4      0.3      1.1     4/4      0.8     2.4      4/4   (lens assumed)
 ```
 
 The synthetic goal has bent corners like a real frame, so the corner the
@@ -413,16 +413,17 @@ On four real slow-motion shots (backyard, phone lying on the ground about
 
 | | Speed vs the slow-motion reading | Mark vs the slow-motion reading |
 | --- | --- | --- |
-| 60 fps, shot 1 (just wide) | within 2% | within 2.4 in |
-| 60 fps, shot 2 (into the net) | −5% to +2% | within 2.2 in |
-| 60 fps, shot 3 (over the bar) | −2% to +11% | within 2.5 in |
-| 60 fps, shot 4 (off the crossbar) | +5% to +24% | 2–4 in |
-| 30 fps, all four | −13% to +45% | median 3 in, up to 52 in; 4 of 32 versions read nothing |
+| 60 fps, shot 1 (just wide) | −6% to −3% | within 2.8 in |
+| 60 fps, shot 2 (into the net) | −8% to +1% | within 2.1 in |
+| 60 fps, shot 3 (over the bar) | −1% to +11% | within 2.3 in |
+| 60 fps, shot 4 (off the crossbar) | +2% to +14% | 2.8–4.1 in |
+| 30 fps, all four | −25% to +25% | median 3 in, up to 52 in; 1 of 32 versions read nothing |
 
-(Against each shot's slow-motion reading from before the second pass below,
-so that a change cannot move its own yardstick. Across all sixteen 60 fps
-versions: speed within 3.8% at the median, marks within 1.7 in at the median
-and 3.8 in at worst.)
+(Each against its own slow-motion reading with the same settings. Across all
+sixteen 60 fps versions: speed within 4.0% at the median and 13.6% at worst,
+marks within 2.4 in at the median and 4.1 in at worst. The slow-motion
+readings are themselves only as good as their outline: the first one reads
+41.6 mph against 39 timed by hand, while its 60 fps versions read 39-40.)
 
 The copies are written losslessly: an earlier table here came from re-encoded
 copies, and the re-encoding alone blurred the small net's pipes and some
@@ -430,7 +431,7 @@ pucks enough to change the result.
 
 What is left at 60 fps comes from the camera spot, not the frame rate. The
 two shots filmed from the ground 26 ft out on the far side read within a few
-inches but swing ±10-25% on speed between copies: one or two pixels of
+inches but swing by up to 14% on speed between copies: one or two pixels of
 difference in where the net is outlined moves the worked-out camera by feet
 at that distance. A puck that misses wide also carries on into the backstop,
 and from far out and low that looks almost exactly like a puck still short
@@ -506,9 +507,9 @@ flight frame by frame:
 
 | Clip | Hand-timed (release → net, 18.75 ft) | The app |
 | --- | --- | --- |
-| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 46.9 mph |
-| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 50.7 mph |
-| First slow-motion clip (below) | 39 mph | 39.7 mph |
+| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 47.0 mph |
+| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 50.4 mph |
+| First slow-motion clip (below) | 39 mph | 41.6 mph (its 60 fps versions: 39–40) |
 
 What each clip broke, and what changed:
 
@@ -644,14 +645,19 @@ What changed:
   measures that hidden strip (the cut-off goal that fits the outline best)
   and puts the feet back where a goal of the size entered must have them;
   the notes say how much was hidden. On the three clips it applies to, the
-  speeds now read 39.7, 46.9 and 50.7 mph against 39, 47 and 50 timed by
-  hand, and marks sit a few inches higher, where the bottom of the net
+  speeds read 39.7, 46.9 and 50.7 mph against 39, 47 and 50 timed by
+  hand (47.0 and 50.4 on the 60 fps clips with the 48-frame outline below), and marks sit a few inches higher, where the bottom of the net
   really is. On a synthetic lawn with 7 in of grass (`grass_in`), the feet
   come out 15-16 px high without this and within 3 px with it, and the marks
   go from 2.7-6.4 in off to 1.3-4.8. It needs the lens: without it the lens
   is worked out from the same short outline, speeds there read 7-10% high,
   and the notes now ask for the lens. The pose is only fitted to corners
   that fit the size entered.
+- **The outline is voted on by 48 frames, not 24.** The background plate is
+  built from 48 anyway. Each 60 fps copy of a slow-motion clip finds its own
+  outline, and with twice the votes their worst speed spread went from 25%
+  to 14% (median 6.1% to 4.0%), and the benchmark's square-on camera from
+  1.8% to 0.8%.
 - **Crowded clutter ranks last.** A bush in the wind is dozens of leaves that
   each move too far to count as recurring, and they took every place under
   the per-frame cap from a puck crossing open ground. Candidates in a crowd
