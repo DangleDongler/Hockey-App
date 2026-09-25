@@ -236,13 +236,26 @@ def recurring(
     return out
 
 
+def crowded(cands: list[Candidate], radius_px: float, max_neighbours: int) -> np.ndarray:
+    """Which candidates have more than ``max_neighbours`` others within ``radius_px``."""
+    if len(cands) <= max_neighbours + 1:
+        return np.zeros(len(cands), dtype=bool)
+    p = np.array([(c.x, c.y) for c in cands], dtype=np.float64)
+    d = np.hypot(p[:, None, 0] - p[None, :, 0], p[:, None, 1] - p[None, :, 1])
+    return ((d > 1.0) & (d < radius_px)).sum(axis=1) > max_neighbours
+
+
 def demote_recurring(
     cands_by_frame: dict[int, list[Candidate]],
     radius_px: float,
     fps: float,
     cfg: Config,
+    crowd_radius_px: float | None = None,
 ) -> tuple[dict[int, list[Candidate]], int, int]:
     """Rank recurring clutter last in every frame, then apply the per-frame cap.
+
+    With ``crowd_radius_px``, candidates in a crowd (see ``crowded``) rank
+    between the ones standing alone and the recurring clutter.
 
     Returns (candidates, how many were demoted, how many frames were still
     full of candidates that were not clutter).
@@ -258,6 +271,12 @@ def demote_recurring(
         clear = [c for k, c in enumerate(lst) if (f, k) not in flagged]
         clutter = [c for k, c in enumerate(lst) if (f, k) in flagged]
         busy += len(clear) >= cap
+        if crowd_radius_px and len(clear) > cap:
+            # Only matters when the cap would cut something that is not clutter.
+            dense = crowded(lst, crowd_radius_px, cfg.track.clutter_max_neighbours)
+            alone = [c for k, c in enumerate(lst) if (f, k) not in flagged and not dense[k]]
+            crowd = [c for k, c in enumerate(lst) if (f, k) not in flagged and dense[k]]
+            clear = alone + crowd
         kept = (clear + clutter)[:cap]
         if kept:
             out[f] = kept

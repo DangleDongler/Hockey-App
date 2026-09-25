@@ -128,6 +128,32 @@ def approaches_goal(track: Track, plane: GoalPlane, cfg: Config) -> bool:
     return start >= cfg.shot.min_start_outside_goal and start - end >= cfg.shot.min_approach_goal
 
 
+def _without_late_sighting(track: Track, plane: GoalPlane, cam: CameraModel, fps: float, cfg: Config) -> Track:
+    """Drop a last sighting made after the puck, timed from the rest, had reached the goal line.
+
+    The frame after an impact the track can pick up something on its way --
+    the netting springing back, a leaf -- at the same pace: on a synthetic
+    session 6 shots of 20 ended on one, 50-80 px past where the puck stopped,
+    moving the mark 13-25 in.  Timing the crossing with that sighting in
+    cannot catch it, since it sets the flight line's end itself; timed from
+    the sightings before it, it comes frames too late.
+    """
+    if len(track) < 5 or cfg.speed.shot_distance_ft is None:
+        return track
+    head = Track(track.candidates[:-1])
+    guess = plane.to_goal(head.points[-1].reshape(1, 2))[0]
+    if not np.all(np.isfinite(guess)):
+        return track
+    release = np.array([cfg.speed.shooter_offset_ft * 12.0, cfg.speed.release_height_in,
+                        cfg.speed.shot_distance_ft * 12.0])
+    if cam.flight_view_angle_deg(release, np.array([guess[0], guess[1], 0.0])) < cfg.shot.min_view_angle_for_timing_deg:
+        return track
+    crossed = goal_line_crossing(head, plane, cam, cfg, guess)
+    if crossed is not None and track.end_frame - crossed[1] > cfg.shot.mark_at_crossing_after_s * fps:
+        return head
+    return track
+
+
 def shot_from_track(
     index: int,
     track: Track,
@@ -138,6 +164,8 @@ def shot_from_track(
     zones: list[Zone] | None = None,
 ) -> Shot | None:
     zones = zones or build_zones(plane.goal)
+    if cfg.shot.mark_at_crossing and cam is not None and fps >= cfg.shot.mark_at_crossing_min_fps:
+        track = _without_late_sighting(track, plane, cam, fps, cfg)
 
     # The puck is caught by the mesh, so the track ends at the net.  Step a
     # fraction of a frame past the last detection to land on the plane itself.
@@ -160,6 +188,12 @@ def shot_from_track(
                    if side_on >= cfg.shot.min_view_angle_for_timing_deg else None)
         if crossed is not None:
             speed_end = crossed[0]
+            if (cfg.shot.mark_at_crossing and fps >= cfg.shot.mark_at_crossing_min_fps
+                    and last_frame - crossed[1] > cfg.shot.mark_at_crossing_after_s * fps):
+                goal_xy = np.asarray(crossed[0], dtype=float)
+                impact_frame_f = float(crossed[1])
+                impact_px = np.array([np.interp(impact_frame_f, track.frames, track.points[:, 0]),
+                                      np.interp(impact_frame_f, track.frames, track.points[:, 1])])
     x, y = float(goal_xy[0]), float(goal_xy[1])
 
     margin = cfg.shot.miss_margin_in

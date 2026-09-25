@@ -223,3 +223,45 @@ def test_a_track_that_came_apart_mid_flight_keeps_the_better_piece():
     shots = dedupe_shots([_shot(0, 50, 0.4), _shot(30, 52, 0.9)], Config(), fps=240.0)
     assert len(shots) == 1 and shots[0].quality == 0.9
     assert shots[0].notes.count("merged with a near-simultaneous trajectory (likely a rebound)") == 1
+
+
+# --- a sighting after the puck had already reached the goal line -------------
+
+
+def _flight_seen_by(cam, fps: float, stray: bool = False) -> Track:
+    """A straight 40 mph flight from 18.75 ft into the top right, one sighting a frame."""
+    from shottracker.synth import SynthShot
+
+    shot = SynthShot(release_z_in=225, release_x_in=-20, target_x_in=20, target_y_in=30, flight_time_s=0.32,
+                     gravity=False)
+    shot.solve()
+    n = int(shot.flight_time_s * fps)
+    cs = []
+    for f in range(4, n + 1):
+        p = cam.project(shot.position_at(f / fps).reshape(1, 3))[0]
+        cs.append(Candidate(frame=f, x=float(p[0]), y=float(p[1]), area_px=20, score=0.7, aspect=1.5,
+                            angle_deg=0.0, length_px=6.0, darkness=0.5))
+    if stray:
+        # Three frames after the impact, as far on again as the puck went in
+        # the last three: where it would be had nothing stopped it.
+        dx, dy = cs[-1].x - cs[-4].x, cs[-1].y - cs[-4].y
+        cs.append(Candidate(frame=n + 3, x=cs[-1].x + dx, y=cs[-1].y + dy, area_px=20, score=0.7,
+                            aspect=1.5, angle_deg=0.0, length_px=6.0, darkness=0.5))
+    return Track(cs)
+
+
+def test_a_sighting_after_the_puck_reached_the_goal_line_is_not_where_it_hit():
+    from shottracker.camera import CameraModel
+    from shottracker.shots import _without_late_sighting
+    from shottracker.synth import camera_preset
+
+    syn = camera_preset("angled")
+    cam = CameraModel(K=np.array([[syn.fx, 0, syn.cx], [0, syn.fy, syn.cy], [0, 0, 1.0]]), R=syn.R,
+                      t=-syn.R @ syn.position, focal_px=syn.fx, residual_px=0.0, focal_source="known")
+    plane = GoalPlane(syn.project(np.hstack([outer_rect(GoalSpec()), np.zeros((4, 1))])))
+    cfg = Config()
+    cfg.speed.shot_distance_ft, cfg.speed.shooter_offset_ft, cfg.speed.release_height_in = 18.75, -20 / 12, 0.5
+    clean = _flight_seen_by(syn, 60.0)
+    late = _flight_seen_by(syn, 60.0, stray=True)
+    assert len(_without_late_sighting(clean, plane, cam, 60.0, cfg)) == len(clean)
+    assert len(_without_late_sighting(late, plane, cam, 60.0, cfg)) == len(late) - 1

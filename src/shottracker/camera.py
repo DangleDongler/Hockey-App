@@ -30,6 +30,15 @@ import numpy as np
 FOCAL_STABILITY_TOL = 0.15
 FOCAL_JITTER_PX = 1.0
 FOCAL_JITTER_SAMPLES = 24
+# The pose is fitted to the goal's corners only when they fit a goal of the
+# size given, seen through this lens: the corners' RMS miss under this
+# fraction of the goal's width in the picture, and the camera no lower than
+# CAMERA_MIN_HEIGHT_IN.  Synthetic outlines found to a pixel or two fit to
+# 0.3-0.5%; the real backyard clips, with the net entered as 72 x 48, missed by
+# 1.1-1.4% -- and fitting the pose to those put the camera nine feet below
+# the ground, reading speeds 20-65% off.
+PLANAR_FIT_TOL = 0.0075
+CAMERA_MIN_HEIGHT_IN = -12.0
 
 
 @dataclass
@@ -168,6 +177,92 @@ def _stable_focal(
     return best
 
 
+def planar_fit(corners_goal, corners_image, K: np.ndarray) -> tuple[np.ndarray, np.ndarray, float] | None:
+    """The pose that best fits the goal's corners through lens ``K``, and its RMS miss in px.
+
+    Of OpenCV's two mirror-image answers (IPPE), the one that puts the camera
+    on the shooter's side of the goal, looking at it, is kept.
+    """
+    cg = np.asarray(corners_goal, dtype=np.float64).reshape(-1, 2)
+    ci = np.asarray(corners_image, dtype=np.float64).reshape(-1, 1, 2)
+    if len(cg) < 4 or len(cg) != len(ci):
+        return None
+    obj = np.hstack([cg, np.zeros((len(cg), 1))]).reshape(-1, 1, 3)
+    try:
+        n, rvecs, tvecs, errs = cv2.solvePnPGeneric(obj, ci, K, None, flags=cv2.SOLVEPNP_IPPE)
+    except cv2.error:
+        return None
+    errs = np.ravel(errs) if errs is not None else np.full(n, np.nan)
+    for rvec, tvec, err in zip(rvecs[:n], tvecs[:n], errs[:n]):
+        R, _ = cv2.Rodrigues(rvec)
+        t = np.asarray(tvec, dtype=np.float64).ravel()
+        if (-R.T @ t)[2] > 0 and (R @ np.array([0.0, 24.0, 0.0]) + t)[2] > 0:
+            return R, t, float(err)
+    return None
+
+
+def _planar_pose(corners_goal, corners_image, K: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """Pose from the goal's corners and a known lens, fitted to the corners themselves.
+
+    Reading the pose straight out of the homography scales it by one column
+    and squares up the rotation afterwards, which spreads any error in the
+    corners into the camera's position: on synthetic views with the lens
+    known, a pixel of error in the outline put the camera 21-35 in from where
+    it was, and every speed with it.  Fitting the pose to the corners directly
+    lands 6-11 in away from the same corners.
+
+    But only if the corners fit a goal of the size given at all (see
+    PLANAR_FIT_TOL): when they do not, the best fit explains the mismatch by
+    tilting the view, and the camera ends up feet underground.  Then the
+    homography's answer, which takes its scale from the goal's width alone,
+    is the better one, and None says to keep it.
+    """
+    fit = planar_fit(corners_goal, corners_image, K)
+    if fit is None:
+        return None
+    R, t, rms = fit
+    ci = np.asarray(corners_image, dtype=np.float64).reshape(-1, 2)
+    width_px = 0.5 * (np.linalg.norm(ci[1] - ci[0]) + np.linalg.norm(ci[2] - ci[3]))
+    if not np.isfinite(rms) or rms > PLANAR_FIT_TOL * width_px:
+        return None
+    if (-R.T @ t)[1] < CAMERA_MIN_HEIGHT_IN:
+        return None
+    return R, t
+
+
+def outline_height_fit(corners_image, K: np.ndarray, goal) -> tuple[float, float, float] | None:
+    """How well the outline fits the goal as entered, and which mouth height fits it best.
+
+    A rectangle's proportions can be read from its outline once the lens is
+    known (its size cannot: a bigger goal further away looks the same).  Only
+    the height is searched -- the width is what the player is surest of.
+    Returns (RMS miss as entered, best mouth height, RMS miss at that height),
+    misses as fractions of the goal's width in the picture, or None.
+    """
+    from dataclasses import replace
+
+    from .geometry import outer_rect
+
+    ci = np.asarray(corners_image, dtype=np.float64).reshape(-1, 2)
+    width_px = 0.5 * (np.linalg.norm(ci[1] - ci[0]) + np.linalg.norm(ci[2] - ci[3]))
+    if width_px <= 0:
+        return None
+
+    def miss(height: float) -> float | None:
+        fit = planar_fit(outer_rect(replace(goal, mouth_height_in=height)), ci, K)
+        if fit is None or (-fit[0].T @ fit[1])[1] < CAMERA_MIN_HEIGHT_IN:
+            return None
+        return fit[2] / width_px
+
+    entered = miss(goal.mouth_height_in)
+    heights = np.arange(0.6 * goal.mouth_height_in, 1.3 * goal.mouth_height_in, 0.5)
+    fits = [(m, hgt) for hgt in heights if (m := miss(float(hgt))) is not None]
+    if not fits:
+        return None
+    best, height = min(fits)
+    return (entered if entered is not None else float("inf")), float(height), float(best)
+
+
 def calibrate_from_homography(
     H: np.ndarray,
     image_size: tuple[int, int],
@@ -249,6 +344,15 @@ def calibrate_from_homography(
     cam_pos = -R.T @ t
     if cam_pos[2] < 0:
         return None
+
+    # With the lens known, fit the pose to the corners.  With the lens solved
+    # from this same outline, the homography's pose is the one consistent with
+    # that solve: fitting afresh on top of it made the benchmark's speeds
+    # worse (1.1-1.9% to 2.0-3.4%).
+    if source == "known" and corners_goal is not None and corners_image is not None:
+        better = _planar_pose(corners_goal, corners_image, K)
+        if better is not None:
+            R, t = better
 
     residual = 0.0
     if corners_goal is not None and corners_image is not None:

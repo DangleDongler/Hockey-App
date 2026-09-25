@@ -168,6 +168,24 @@ def test_the_cap_keeps_the_puck_ahead_of_brighter_clutter():
         assert len(capped[f]) <= cfg.puck.max_candidates_per_frame
 
 
+def test_the_cap_keeps_a_lone_puck_ahead_of_a_bush_that_never_repeats_itself():
+    """Leaves swinging too far to count as recurring still crowd together; a
+    puck crossing open ground does not.  Without ranking the crowd after it,
+    brighter leaves take every place under the cap in some frames."""
+    rng = np.random.default_rng(1)
+    by_frame, puck = {}, {}
+    for f in range(40):
+        cs = [_c(f, *rng.uniform([0, 0], [50, 50]), score=0.8) for _ in range(30)]
+        puck[f] = (400.0 + 12 * f, 300.0)
+        cs.append(_c(f, *puck[f], score=0.6))
+        by_frame[f] = sorted(cs, key=lambda c: -c.score)
+    cfg = Config()
+    plain, _, _ = demote_recurring(by_frame, 6.0, 60.0, cfg)
+    ranked, _, _ = demote_recurring(by_frame, 6.0, 60.0, cfg, crowd_radius_px=60.0)
+    assert not all(any((c.x, c.y) == xy for c in plain[f]) for f, xy in puck.items())
+    assert all(any((c.x, c.y) == xy for c in ranked[f]) for f, xy in puck.items())
+
+
 # --- a track that bends where the flight begins and ends -----------------------
 
 

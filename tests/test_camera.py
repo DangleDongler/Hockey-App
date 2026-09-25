@@ -100,3 +100,43 @@ def test_with_nothing_to_fall_back_on_it_declines():
 def test_a_measured_focal_reports_how_much_it_moved():
     _, model = _calibrate("side", jitter=1.0, assumed=0.8 * 1280)
     assert 0.0 < model.focal_spread <= 0.15
+
+
+# --- the pose, fitted to the corners ----------------------------------------
+
+def _known_lens(preset: str, spec: GoalSpec, seen_as: GoalSpec, noise: float, seed: int):
+    """Calibrate with the lens known from a goal of size ``spec`` taken to be ``seen_as``."""
+    cam = camera_preset(preset)
+    quad = cam.project(np.hstack([outer_rect(spec), np.zeros((4, 1))]))
+    quad = quad + np.random.default_rng(seed).normal(0.0, noise, quad.shape)
+    plane = GoalPlane(quad, seen_as)
+    model = calibrate_from_homography(plane.H, (cam.width, cam.height), outer_rect(seen_as), plane.image_quad,
+                                      known_focal_px=cam.fx)
+    return cam, quad, model
+
+
+@pytest.mark.parametrize("preset", ["angled", "side"])
+def test_with_the_lens_known_the_pose_is_fitted_to_the_corners(preset):
+    """A pixel of error in the outline used to move the camera about 20 in when
+    the pose was read off the homography; fitted to the corners, under 10."""
+    errs = [np.linalg.norm(model.position - cam.position)
+            for cam, _, model in (_known_lens(preset, GoalSpec(), GoalSpec(), 1.0, s) for s in range(40))]
+    assert np.median(errs) < 10.0
+
+
+def test_an_outline_that_does_not_fit_the_goal_keeps_the_camera_above_ground():
+    """A net smaller than the size entered: the best fit to the corners tilts
+    the view to explain it and puts the camera underground, so it is not used."""
+    cam, _, model = _known_lens("angled", GoalSpec(mouth_height_in=41.0), GoalSpec(), 0.0, 0)
+    assert model is not None
+    assert model.position[1] > 0.0
+
+
+def test_the_outline_says_how_tall_the_goal_really_is():
+    from shottracker.camera import outline_height_fit
+
+    cam, quad, _ = _known_lens("angled", GoalSpec(mouth_height_in=41.0), GoalSpec(), 0.3, 0)
+    K = np.array([[cam.fx, 0.0, cam.cx], [0.0, cam.fy, cam.cy], [0.0, 0.0, 1.0]])
+    entered, height, best = outline_height_fit(quad, K, GoalSpec())
+    assert height == pytest.approx(41.0, abs=1.0)
+    assert best < entered

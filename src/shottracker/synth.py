@@ -331,15 +331,18 @@ def render_session(
             ).astype(np.uint8)
 
             if distractor:
-                # Something dark, big-ish and slow: a stick blade sweeping past.
-                dx = -260.0 + 150.0 * t
+                # Something dark, big-ish and slow: a stick blade sweeping
+                # past, and in a long clip sweeping past again every 3.6 s
+                # (drifting on for good, it ended up behind the camera).
+                dx = -260.0 + 150.0 * (t % 3.6)
                 p = np.array([dx, 6.0, 250.0])
-                uv = cam.project(p.reshape(1, 3))[0]
-                z = max(cam.depth(p), 1.0)
-                r = int(max(3, cam.fx * 4.0 / z))
-                cv2.ellipse(
-                    frame, (int(uv[0]), int(uv[1])), (r * 2, r), 20, 0, 360, (30, 30, 30), -1, cv2.LINE_AA
-                )
+                z = cam.depth(p)
+                if z > 12.0:
+                    uv = cam.project(p.reshape(1, 3))[0]
+                    r = int(max(3, cam.fx * 4.0 / z))
+                    cv2.ellipse(
+                        frame, (int(uv[0]), int(uv[1])), (r * 2, r), 20, 0, 360, (30, 30, 30), -1, cv2.LINE_AA
+                    )
 
             if net_sway:
                 # A damped shake of the mesh for a third of a second after each hit.

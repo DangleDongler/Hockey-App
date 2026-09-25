@@ -186,6 +186,12 @@ class PuckDetectConfig:
     recurring_window_s: float = 0.125
     recurring_min_window_frames: int = 8
     recurring_min_hits: int = 3       # distinct frames, on each side
+    # Then, of what is left, candidates in a crowd -- more than the tracker's
+    # clutter_max_neighbours others within clutter_radius_frac goal widths,
+    # the same test a track's clear sightings must pass -- rank after the
+    # ones standing alone.  A bush in the wind is dozens of leaves that each
+    # move too far to count as recurring; a puck in flight is mostly alone.
+    demote_crowded: bool = True
     # A frame pinned at the cap means the foreground model is failing (usually
     # a camera that moved).  Past this fraction of frames, say so.
     saturated_frame_warn_frac: float = 0.5
@@ -357,6 +363,14 @@ class ShotConfig:
     # its line.  From straight behind the shooter, how fast the puck closes on
     # the goal line barely shows, and the timing is worse than none.
     min_view_angle_for_timing_deg: float = 25.0
+    # And when the last sighting comes more than this long after the timed
+    # crossing, it is past the goal line -- netting springing back, or
+    # a leaf the track picked up -- and the mark goes where the puck was at
+    # the crossing instead.  Only at mark_at_crossing_min_fps and up: at 30
+    # fps the timing itself is too coarse to overrule a sighting.
+    mark_at_crossing: bool = False
+    mark_at_crossing_after_s: float = 0.03
+    mark_at_crossing_min_fps: float = 50.0
     # Two impacts closer together than this are one shot plus its aftermath
     # (a rebound, or the netting still moving).  Seconds, not frames: at
     # 240 fps a count of frames is an eighth of the time it is at 30 fps.

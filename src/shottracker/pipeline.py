@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .camera import CameraModel, calibrate_from_homography
+from .camera import PLANAR_FIT_TOL, CameraModel, calibrate_from_homography, outline_height_fit
 from .config import PUCK_DIAMETER_IN, CameraConfig, Config
 from .container import Lens, detect_slow_motion, read_lens, read_timing
 from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
@@ -197,8 +197,13 @@ def _busy_scene_warning(
         ref = grays[len(grays) // 2]
         est = estimate_motion(ref, grays, scale=scale * s2)
         weak = sum(1 for _, resp in est.values() if resp < 0.12)
-        shifts = [abs(dx) + abs(dy) for (dx, dy), resp in est.values() if resp >= 0.12]
-        drift = (max(shifts) if shifts else 0.0, weak / max(len(est), 1))
+        shifts = sorted((abs(dx) + abs(dy) for (dx, dy), resp in est.values() if resp >= 0.12), reverse=True)
+        # A camera that moved shows it in many of the samples.  One sample
+        # thrown off by something big crossing the view -- the shooter, a
+        # stick -- is not the camera: on a synthetic clip from a camera that
+        # never moved, that alone read as 12 px of drift.
+        moved = shifts[len(shifts) // 4] if shifts else 0.0
+        drift = (moved, weak / max(len(est), 1))
 
     if drift is not None and drift[0] <= cfg.puck.stabilize_drift_threshold_px and drift[1] < 0.25:
         return head + (
@@ -211,8 +216,34 @@ def _busy_scene_warning(
     elif drift[1] >= 0.25:
         how = "The view kept changing, as when a phone is carried or panned"
     else:
-        how = f"The camera moved during the clip, by up to {drift[0]:.0f} px"
+        how = f"The camera moved during the clip, by {drift[0]:.0f} px or more"
     return head + how + "; prop the phone against something steady rather than holding it."
+
+
+def _goal_size_note(quad: np.ndarray, K: np.ndarray, cfg: Config) -> str | None:
+    """Say so when the net's outline does not fit a goal of the size entered.
+
+    With the lens known, the outline's proportions are measured, not assumed.
+    On every real backyard clip so far, entered as 72 x 48, the outline fitted
+    a goal about 86% as tall far better (a pixel or less against 2.5-5 px),
+    and put the phone where it really was, on the ground about 25 ft out.
+    Either that net is smaller than regulation or its outline was found
+    short, and marks' heights depend on which.
+    """
+    fit = outline_height_fit(quad, K, cfg.goal)
+    if fit is None:
+        return None
+    entered, height, best = fit
+    if entered <= PLANAR_FIT_TOL or best > 0.5 * PLANAR_FIT_TOL or abs(height - cfg.goal.mouth_height_in) < 2.0:
+        return None
+    g = cfg.goal
+    return (
+        f"the net's outline fits a goal about {g.mouth_width_in:.0f} x {height:.0f} in far better than the "
+        f"{g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in entered. Measure the opening: if it is "
+        f"{g.mouth_width_in:.0f} x {height:.0f}, enter that, since every mark's height and the speed depend on it; "
+        f"if it really is {g.mouth_width_in:.0f} x {g.mouth_height_in:.0f}, the outline was found short (grass over "
+        "the bottom of the posts, or the crossbar's lower edge), and marks' heights are off by the same amount"
+    )
 
 
 def _too_slow_for_a_shot(shot: Shot, cfg: Config) -> bool:
@@ -486,6 +517,9 @@ def analyze(
     )
     if cam is not None and known:
         warnings.append(f"lens: {known[2]}")
+        note = _goal_size_note(plane.image_quad, cam.K, cfg)
+        if note:
+            warnings.append(note)
     if cam is None:
         warnings.append(
             "could not recover the camera geometry from the goal outline; speed falls back to "
@@ -599,8 +633,9 @@ def analyze(
     raw_xy = {f: np.array([(c.x, c.y) for c in v], dtype=np.float64) for f, v in cands_by_frame.items()}
     if cfg.puck.demote_recurring:
         n_frames = max(len(cands_by_frame), 1)
+        crowd = cfg.track.clutter_radius_frac * goal_width_px if cfg.puck.demote_crowded else None
         cands_by_frame, _, busy = demote_recurring(
-            cands_by_frame, puck_px_small / scale, info.fps, cfg)
+            cands_by_frame, puck_px_small / scale, info.fps, cfg, crowd)
         saturated = busy / n_frames
     else:
         saturated = sum(
