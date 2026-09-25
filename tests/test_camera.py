@@ -156,3 +156,21 @@ def test_from_far_and_low_the_pose_keeps_to_the_goals_width():
     quad = near.project(np.hstack([outer_rect(GoalSpec()), np.zeros((4, 1))]))
     K = np.array([[near.fx, 0.0, near.cx], [0.0, near.fy, near.cy], [0.0, 0.0, 1.0]])
     assert _planar_pose(outer_rect(GoalSpec()), quad, K) is not None
+
+
+def test_feet_hidden_in_grass_are_put_back():
+    """From the ground the lawn hides the bottom of the posts; with the lens
+    known, the outline's proportions say how much, and where the feet are."""
+    from shottracker.camera import hidden_feet
+
+    cam = camera_preset("backyard", 1080, 1920)
+    K = np.array([[cam.fx, 0.0, cam.cx], [0.0, cam.fy, cam.cy], [0.0, 0.0, 1.0]])
+    goal = GoalSpec()
+    true = cam.project(np.hstack([outer_rect(goal), np.zeros((4, 1))]))
+    seen = true.copy()
+    hw = goal.outer_width_in / 2.0
+    seen[2:] = cam.project(np.array([[hw, 7.0, 0.0], [-hw, 7.0, 0.0]]))   # the red stops 7 in up
+    quad, hidden = hidden_feet(seen, K, goal)
+    assert hidden == pytest.approx(7.0, abs=0.5)
+    assert np.abs(quad - true).max() < 1.0
+    assert hidden_feet(true, K, goal) is None

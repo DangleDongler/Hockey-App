@@ -186,6 +186,25 @@ def test_the_cap_keeps_a_lone_puck_ahead_of_a_bush_that_never_repeats_itself():
     assert all(any((c.x, c.y) == xy for c in ranked[f]) for f, xy in puck.items())
 
 
+def test_a_line_of_things_flickering_in_place_is_not_a_puck():
+    """The first frames of a real clip, while the camera settled: lamps, a post
+    and the edge of a house flickered where they stood, and five of them lined
+    up into an 89 mph "shot".  Each kept turning up where it was; a puck
+    passes a spot once."""
+    from shottracker.tracking import revisits
+
+    spots = [(100.0 + 150.0 * k, 400.0 - 20.0 * k) for k in range(6)]
+    raw = {}
+    for f in range(0, 16):
+        pts = [p for k, p in enumerate(spots) if (f + k) % 3]          # each flickers two frames in three
+        pts.append((100.0 + 60.0 * f, 700.0))                          # and a puck crosses, elsewhere
+        raw[f] = np.array(pts)
+    flicker = Track([_c(k + 1, *spots[k]) for k in range(5) if (k + 1 + k) % 3])
+    puck = Track([_c(f, 100.0 + 60.0 * f, 700.0) for f in range(0, 12)])
+    assert revisits(flicker, raw, 6.0, window=8, gap=2) > Config().track.max_revisit_frac
+    assert revisits(puck, raw, 6.0, window=8, gap=2) < 0.05
+
+
 # --- a track that bends where the flight begins and ends -----------------------
 
 

@@ -532,6 +532,26 @@ def clear_sightings(
     return n
 
 
+def revisits(track: Track, raw_xy: dict[int, np.ndarray], radius_px: float, window: int, gap: int) -> float:
+    """How often something turns up again where a track's sightings were.
+
+    The fraction of frames between ``gap`` and ``window`` either side of each
+    sighting that have a candidate within ``radius_px`` of it.  A puck passes
+    a spot once; a line of things that flicker in place -- lamps, a post, the
+    edge of a house while the camera settles at the start of a clip -- keeps
+    being seen where it is.  Unlike the recurring-clutter test, either side
+    counts, so it still works in a clip's first and last moments.
+    """
+    total = 0
+    for c in track.candidates:
+        for df in range(gap, window + 1):
+            for f in (c.frame - df, c.frame + df):
+                pts = raw_xy.get(f)
+                if pts is not None and len(pts) and bool((np.hypot(pts[:, 0] - c.x, pts[:, 1] - c.y) < radius_px).any()):
+                    total += 1
+    return total / max(len(track) * 2 * (window - gap + 1), 1)
+
+
 def filter_by_clutter(
     tracks: list[Track], raw_xy: dict[int, np.ndarray], goal_width_px: float, fps: float, cfg: Config
 ) -> tuple[list[Track], int]:

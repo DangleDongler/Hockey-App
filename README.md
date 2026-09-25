@@ -477,10 +477,12 @@ Two approaches were tried and set aside, for reasons worth keeping:
 ### Where to put the phone
 
 The phone's position decides more than the frame rate does. From the ground
-26 ft out, the net is about a fifth of the frame wide, and its outline cannot
-say where the phone is: one or two pixels of error in its corners moves the
-worked-out camera anywhere from three feet underground to five feet up, and
-the speed with it. Better, in order:
+26 ft out, the net is about a fifth of the frame wide, and its outline says
+little about where the phone is: a pixel or two of error in its corners moves
+the worked-out camera by feet, and the speed with it. Most of what looked like
+that error on the real clips turned out to be the lawn hiding the bottom of
+the posts, which the app now allows for (see *A third pass* below), but a
+higher, closer phone is still better, in order:
 
 1. **Record at 60 fps** (normal video, not slow motion). Normal iPhone video
    records which lens filmed it; the app reads that and no longer has to guess
@@ -504,9 +506,9 @@ flight frame by frame:
 
 | Clip | Hand-timed (release → net, 18.75 ft) | The app |
 | --- | --- | --- |
-| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 47.2 mph |
-| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 48.4 mph |
-| First slow-motion clip (below) | 39 mph | 39.5 mph |
+| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 46.9 mph |
+| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 50.7 mph |
+| First slow-motion clip (below) | 39 mph | 39.7 mph |
 
 What each clip broke, and what changed:
 
@@ -630,14 +632,21 @@ What changed:
   copies 7.1% on speed at the median instead of 5.4%, and 43% at worst
   instead of 25%. So the fit is used only where a crossbar pixel moves it
   less than 6 in.
-- **The net's size is checked.** A goal's proportions can be read from its
-  outline once the lens is known. Every real clip so far, entered as 72 x 48,
-  fits a goal about 72 x 40-42 in to a pixel or less, against 2.5-5 px for
-  72 x 48 -- and that fit puts the phone where it was, on the ground 24-26 ft
-  out, where 72 x 48 puts it nine feet underground. Either that net is
-  smaller than regulation or its outline is found short (grass over the
-  bottom of the posts, or the crossbar's lower edge). The report now says
-  so. The pose is only fitted to corners that fit the size entered.
+- **The net's size is checked, and posts hidden in grass are put back.** A
+  goal's proportions can be read from its outline once the lens is known.
+  Every real clip so far, entered as 72 x 48, fitted a goal about 72 x 40-42
+  in to a pixel or less, against 2.5-5 px for 72 x 48 -- and that fit put the
+  phone where it was, on the ground 24-26 ft out, where 72 x 48 put it nine
+  feet underground. The net is a regulation NHL net, so the outline was
+  short, and looking at the frames says why: from a phone on the ground, the
+  lawn in front of the net hides the bottom of the posts, and the outline
+  stopped where the red did, 6-8 in up. With the lens known, the app now
+  measures that hidden strip (the cut-off goal that fits the outline best)
+  and puts the feet back where a goal of the size entered must have them;
+  the notes say how much was hidden. On the three clips it applies to, the
+  speeds now read 39.7, 46.9 and 50.7 mph against 39, 47 and 50 timed by
+  hand, and marks sit a few inches higher, where the bottom of the net
+  really is. The pose is only fitted to corners that fit the size entered.
 - **Crowded clutter ranks last.** A bush in the wind is dozens of leaves that
   each move too far to count as recurring, and they took every place under
   the per-frame cap from a puck crossing open ground. Candidates in a crowd
@@ -775,9 +784,9 @@ Still untested on real video, and next in line:
 
 ## Next
 
-- Settle the real net's size (measure the opening). If the outline is being
-  found short rather than the net being small, fix the outline; either way
-  the camera can then be fitted to the corners on real clips too.
+- The newer slow-motion clips, filmed further to the right, still have an
+  outline that fits no goal: one post leans in the picture and the outline
+  runs down it at the wrong angle. Fix the post edges in oblique views.
 - With the camera fitted to the corners, try the full 3-D flight fit again
   (set aside because the camera was only accurate near the goal).
 - Calibrate the puck size and blur against real clips to widen the detector's

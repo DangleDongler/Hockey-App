@@ -60,6 +60,9 @@ class NetDetectConfig:
 
     # Frames sampled across the clip to vote on a single static outline.
     sample_frames: int = 24
+    # With the lens known, put back posts' feet hidden in grass (see
+    # camera.hidden_feet).
+    restore_hidden_feet: bool = True
     work_width: int = 960          # detection resolution; results are rescaled
 
     # Red goal pipe in HSV.  Red wraps the hue circle so we need two bands.
@@ -251,6 +254,12 @@ class TrackingConfig:
     min_clear_sightings: int = 3
     clutter_radius_frac: float = 0.5
     clutter_max_neighbours: int = 10
+    # A track whose sightings keep turning up again in place -- more than this
+    # fraction of the nearby frames, either side -- is things flickering where
+    # they stand, not a puck (see tracking.revisits).  Real shots: 2-3%; a line
+    # of lamps and posts flickering while the camera settled in the first
+    # frames of a real clip, read as an 89 mph shot: 43%.
+    max_revisit_frac: float = 0.2
 
     ransac_iterations: int = 60
     # Seed pairs grow with the square of the candidates per frame, so a bad

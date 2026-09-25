@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .camera import PLANAR_FIT_TOL, CameraModel, calibrate_from_homography, outline_height_fit
+from .camera import PLANAR_FIT_TOL, CameraModel, calibrate_from_homography, hidden_feet, outline_height_fit
 from .config import PUCK_DIAMETER_IN, CameraConfig, Config
 from .container import Lens, detect_slow_motion, read_lens, read_timing
 from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
@@ -24,7 +24,7 @@ from .net_detect import NetDetection, detect_net
 from .puck_detect import Candidate, PuckDetector, build_background_and_noise, demote_recurring
 from .shots import Shot, approaches_goal, dedupe_shots, shot_from_track
 from .stabilize import CameraMotion, estimate_motion, interpolate, measure
-from .tracking import Track, build_tracks, filter_by_clutter, filter_by_speed, until_impact
+from .tracking import Track, build_tracks, filter_by_clutter, filter_by_speed, revisits, until_impact
 from .video import iter_frames, keyframes
 
 
@@ -224,11 +224,10 @@ def _goal_size_note(quad: np.ndarray, K: np.ndarray, cfg: Config) -> str | None:
     """Say so when the net's outline does not fit a goal of the size entered.
 
     With the lens known, the outline's proportions are measured, not assumed.
-    On every real backyard clip so far, entered as 72 x 48, the outline fitted
-    a goal about 86% as tall far better (a pixel or less against 2.5-5 px),
-    and put the phone where it really was, on the ground about 25 ft out.
-    Either that net is smaller than regulation or its outline was found
-    short, and marks' heights depend on which.
+    An outline that is short is usually posts hidden in grass, and is put
+    right before this (see camera.hidden_feet); one that is taller than the
+    size entered, or short by more than grass could hide, is a net of another
+    size.
     """
     fit = outline_height_fit(quad, K, cfg.goal)
     if fit is None:
@@ -239,10 +238,8 @@ def _goal_size_note(quad: np.ndarray, K: np.ndarray, cfg: Config) -> str | None:
     g = cfg.goal
     return (
         f"the net's outline fits a goal about {g.mouth_width_in:.0f} x {height:.0f} in far better than the "
-        f"{g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in entered. Measure the opening: if it is "
-        f"{g.mouth_width_in:.0f} x {height:.0f}, enter that, since every mark's height and the speed depend on it; "
-        f"if it really is {g.mouth_width_in:.0f} x {g.mouth_height_in:.0f}, the outline was found short (grass over "
-        "the bottom of the posts, or the crossbar's lower edge), and marks' heights are off by the same amount"
+        f"{g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in entered. Measure the opening, and if it is "
+        f"{g.mouth_width_in:.0f} x {height:.0f}, enter that: every mark's height and the speed depend on it"
     )
 
 
@@ -504,8 +501,20 @@ def analyze(
                              elapsed_s=time.perf_counter() - started)
     warnings.extend(net.notes)
 
-    plane = GoalPlane(net.quad, cfg.goal)
     known = known_focal_px(info, cfg)
+    if known and cfg.net.restore_hidden_feet:
+        K = np.array([[known[0], 0.0, info.width / 2.0], [0.0, known[0], info.height / 2.0], [0.0, 0.0, 1.0]])
+        restored = hidden_feet(net.quad, K, cfg.goal)
+        if restored is not None:
+            net.quad, hidden = restored
+            g = cfg.goal
+            warnings.append(
+                f"the bottom {hidden:.0f} in of the posts look hidden -- grass, seen from low down -- so the goal's "
+                f"feet were put where a {g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in goal's must be. If the "
+                f"opening really is about {g.mouth_width_in:.0f} x {g.mouth_height_in - hidden:.0f} in, enter that"
+            )
+
+    plane = GoalPlane(net.quad, cfg.goal)
     cam = calibrate_from_homography(
         plane.H,
         (info.width, info.height),
@@ -646,6 +655,11 @@ def analyze(
     tracks = build_tracks(cands_by_frame, goal_width_px, cfg, warnings, fps=info.fps)
     tracks = filter_by_speed(tracks, goal_width_px, info.fps, cfg)
     tracks, in_clutter = filter_by_clutter(tracks, raw_xy, goal_width_px, info.fps, cfg)
+    window = max(cfg.puck.recurring_min_window_frames, int(round(cfg.puck.recurring_window_s * info.fps)))
+    gap = max(2, int(round(0.0125 * info.fps)))
+    in_place = [t for t in tracks
+                if revisits(t, raw_xy, puck_px_small / scale, window, gap) > cfg.track.max_revisit_frac]
+    tracks = [t for t in tracks if not any(t is p for p in in_place)]
     near = _near_goal(plane, goal_width_px, cfg)
     tracks = [until_impact(t, info.fps, cfg, near) for t in tracks]
 
@@ -680,6 +694,12 @@ def analyze(
             f"not counted as shots: {in_clutter} short line(s) of flickers in busy background -- leaves "
             "moving in the sun, netting rippling -- that happened to line up. A puck crosses clear "
             "background for most of its flight."
+        )
+    if in_place:
+        warnings.append(
+            f"not counted as shots: {len(in_place)} line(s) of things flickering where they stand -- lamps, "
+            "posts, edges, often in the first moments of a clip while the camera settles -- that happened "
+            "to line up. A puck passes any spot once."
         )
     if started_at_goal:
         warnings.append(

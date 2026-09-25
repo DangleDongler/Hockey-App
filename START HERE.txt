@@ -45,9 +45,9 @@ These matter more than anything else for accuracy:
   screen width. The whole goal must be in view, including where the posts
   meet the ground.
 - Measure how far the shooting spot is from the goal line, in feet.
-- Measure the net's opening once: inside width, and height from the ground
-  to the underside of the crossbar. Many backyard nets are not 6 ft x 4 ft,
-  and every mark's height depends on it.
+- If your net isn't a regulation 6 ft x 4 ft (72 x 48 in) one, measure its
+  opening: inside width, and height from the ground to the underside of the
+  crossbar. Every mark's height depends on it.
 - Keep the pile of spare pucks out of the puck's path, one shooter at a
   time, and a couple of seconds between shots. A clip can hold many shots.
 
@@ -62,9 +62,10 @@ These matter more than anything else for accuracy:
 - Fill in the shooting distance, the lens you filmed with (0.5x or 1x),
   the net's opening in inches, and what you were aiming at. The page
   remembers these for next time.
-- If the notes under the results say the net's outline fits a different
-  size, measure the net again: either it is that size (enter it), or the
-  app is finding its outline short, which is worth telling us about.
+- If the notes say the bottom few inches of the posts looked hidden (grass,
+  seen from low down), that's normal from the ground; the app allows for
+  it. If they say the outline fits a different size of net, check the size
+  you entered.
 - Press Analyze. A 30-second clip at 1080p takes a minute or two; 4K
   takes several.
 

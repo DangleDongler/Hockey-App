@@ -245,6 +245,51 @@ def _planar_pose(corners_goal, corners_image, K: np.ndarray) -> tuple[np.ndarray
     return R, t
 
 
+def hidden_feet(corners_image, K: np.ndarray, goal, max_hidden_in: float = 15.0,
+                min_hidden_in: float = 1.5) -> tuple[np.ndarray, float] | None:
+    """Where the posts' feet are when grass hides them, or None if nothing is hidden.
+
+    From a phone on the ground, the lawn between it and the net hides the
+    bottom of the posts, and the outline stops where the red stops.  On the
+    real backyard clips that was 6-8 in of a 48 in NHL net: the outline fitted
+    a goal 86% as tall to a pixel, and put the camera nine feet underground as
+    72 x 48.  With the lens known, the outline's proportions are measured, so
+    the missing strip can be too: fit the goal with its bottom ``hidden``
+    inches cut off, and take the cut that fits best.  (A strip missing from
+    the top would fit just as well -- the shape cannot tell -- but the top is
+    the crossbar, which nothing in a backyard hides.)  Returns the outline
+    with the feet put back, and how many inches were hidden.
+    """
+    ci = np.asarray(corners_image, dtype=np.float64).reshape(-1, 2)
+    width_px = 0.5 * (np.linalg.norm(ci[1] - ci[0]) + np.linalg.norm(ci[2] - ci[3]))
+    if width_px <= 0:
+        return None
+    hw, top = goal.outer_width_in / 2.0, goal.outer_height_in
+
+    def fit(hidden: float):
+        rect = np.array([[-hw, top], [hw, top], [hw, hidden], [-hw, hidden]])
+        f = planar_fit(rect, ci, K)
+        if f is None or (-f[0].T @ f[1])[1] < CAMERA_MIN_HEIGHT_IN:
+            return None
+        return f[2] / width_px, f[0], f[1]
+
+    as_seen = fit(0.0)
+    if as_seen is not None and as_seen[0] <= PLANAR_FIT_TOL:
+        return None
+    fits = [(f[0], h, f) for h in np.arange(0.0, max_hidden_in + 1e-9, 0.25) if (f := fit(float(h))) is not None]
+    if not fits:
+        return None
+    best, hidden, (_, R, t) = min(fits, key=lambda x: x[0])
+    if hidden < min_hidden_in or best > 0.5 * PLANAR_FIT_TOL:
+        return None
+    feet = np.array([[hw, 0.0, 0.0], [-hw, 0.0, 0.0]])
+    cam = (R @ feet.T).T + t
+    if np.any(cam[:, 2] <= 0):
+        return None
+    img = (K @ (cam / cam[:, 2:3]).T).T[:, :2]
+    return np.array([ci[0], ci[1], img[0], img[1]]), float(hidden)
+
+
 def outline_height_fit(corners_image, K: np.ndarray, goal) -> tuple[float, float, float] | None:
     """How well the outline fits the goal as entered, and which mouth height fits it best.
 
