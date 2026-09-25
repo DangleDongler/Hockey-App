@@ -9,7 +9,7 @@ import sys
 
 import numpy as np
 
-from .config import Config
+from .config import CameraConfig, Config
 from .pipeline import analyze
 from .report import format_session_report, format_text_report, shot_chart_svg
 from .session import ShotSession
@@ -35,6 +35,8 @@ def _build_config(args) -> Config:
         cfg.speed.method = args.speed_method
     if getattr(args, "hfov", None):
         cfg.camera.hfov_deg = args.hfov
+    if getattr(args, "lens", None):
+        cfg.camera.focal_35mm = CameraConfig.LENS_CHOICES[args.lens]
     if getattr(args, "target", None):
         cfg.target.kind = args.target
     if getattr(args, "target_at", None):
@@ -182,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
                    "slowdown baked in is usually detected from the sound; use this when it is not")
     a.add_argument("--speed-method", choices=["auto", "time_of_flight", "ballistic_3d", "goal_plane"],
                    default="auto")
+    a.add_argument("--lens", choices=sorted(CameraConfig.LENS_CHOICES),
+                   help="the iPhone lens it was filmed with. Only used when the file does not say: "
+                        "slow motion never does.")
     a.add_argument("--hfov", type=float, metavar="DEG",
                    help="the horizontal field of view of the video as filmed, in degrees. Normal "
                         "iPhone video records its lens in the file, so this is only needed for slow "

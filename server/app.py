@@ -24,7 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from shottracker.config import Config
+from shottracker.config import CameraConfig, Config
 from shottracker.history import progress, rescore, session_record
 from shottracker.net_detect import detect_net_in_frame
 from shottracker.pipeline import SessionResult, analyze
@@ -106,6 +106,7 @@ def _settings(cfg: Config) -> dict[str, Any]:
         "shooter_offset_ft": cfg.speed.shooter_offset_ft,
         "assumed_focal_frac": cfg.camera.assumed_focal_frac,
         "hfov_deg": cfg.camera.hfov_deg,
+        "focal_35mm": cfg.camera.focal_35mm,
         "fps_override": cfg.fps_override,
         "goal": {"mouth_width_in": cfg.goal.mouth_width_in, "mouth_height_in": cfg.goal.mouth_height_in},
         "target": {"kind": cfg.target.kind, "radius_in": cfg.target.radius_in,
@@ -119,6 +120,7 @@ def _config_from(settings: dict[str, Any]) -> Config:
     cfg.speed.shooter_offset_ft = settings.get("shooter_offset_ft") or 0.0
     cfg.camera.assumed_focal_frac = settings.get("assumed_focal_frac") or cfg.camera.assumed_focal_frac
     cfg.camera.hfov_deg = settings.get("hfov_deg")
+    cfg.camera.focal_35mm = settings.get("focal_35mm")
     cfg.fps_override = settings.get("fps_override")
     goal = settings.get("goal") or {}
     cfg.goal.mouth_width_in = goal.get("mouth_width_in") or cfg.goal.mouth_width_in
@@ -241,6 +243,7 @@ async def create_job(
     shot_distance_ft: float | None = Form(None),
     shooter_offset_ft: float = Form(0.0),
     hfov_deg: float | None = Form(None),
+    lens: str | None = Form(None),
     fps_override: float | None = Form(None),
     goal_width_in: float | None = Form(None),
     goal_height_in: float | None = Form(None),
@@ -257,6 +260,9 @@ async def create_job(
         suffix = Path(u.filename or "clip.mp4").suffix.lower()
         if suffix not in ALLOWED_SUFFIXES:
             raise HTTPException(400, f"unsupported file type {suffix!r}; use one of {sorted(ALLOWED_SUFFIXES)}")
+
+    if lens and lens not in CameraConfig.LENS_CHOICES:
+        raise HTTPException(400, f"unknown lens {lens!r}; use one of {sorted(CameraConfig.LENS_CHOICES)}")
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = DATA_DIR / job_id
@@ -281,6 +287,8 @@ async def create_job(
     cfg.speed.shooter_offset_ft = shooter_offset_ft
     if hfov_deg:
         cfg.camera.hfov_deg = hfov_deg
+    if lens:
+        cfg.camera.focal_35mm = CameraConfig.LENS_CHOICES[lens]
     if fps_override:
         cfg.fps_override = fps_override
     if goal_width_in:

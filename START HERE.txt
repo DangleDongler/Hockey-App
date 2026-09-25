@@ -1,0 +1,92 @@
+HOCKEY SHOT TRACKER - TRYING IT AT HOME
+=======================================
+
+The app runs on a computer (Mac or Windows). You use it from a web page,
+on the computer or on your phone, as long as both are on the same Wi-Fi.
+
+
+1. INSTALL PYTHON (ONCE)
+------------------------
+Go to https://www.python.org/downloads/ and install the latest version.
+On Windows, tick "Add python.exe to PATH" on the installer's first screen.
+(The starter below checks for it and opens that page if it's missing.)
+
+
+2. START THE APP
+----------------
+Mac:     double-click "Start Hockey App (Mac).command"
+Windows: double-click "Start Hockey App (Windows).bat"
+
+The first time takes a few minutes while it sets itself up. After that it
+starts in seconds. A window opens showing two addresses, and the app opens
+in your browser. KEEP THAT WINDOW OPEN while you use the app; closing it
+stops the app.
+
+If the computer won't let it open:
+- Mac, "cannot be opened" or "could not verify": open System Settings >
+  Privacy & Security, scroll down, click "Open Anyway". Or open the
+  Terminal app, type  bash  and a space, drag the .command file into the
+  window, and press Return.
+- Windows, "Windows protected your PC": click "More info", then "Run anyway".
+- If it asks whether to allow network connections, click Allow. That is what
+  lets your phone reach it.
+
+
+3. FILM
+-------
+These matter more than anything else for accuracy:
+
+- Record normal video at 60 fps: Settings > Camera > Record Video >
+  1080p HD at 60 fps. (1080p analyses much faster than 4K. 30 fps is not
+  accurate enough to trust.)
+- Keep the phone still: prop it on a chair, a bag or a tripod.
+- Put it about chest height, off to the side at about 45 degrees from the
+  shooting lane, close enough that the net fills about a third of the
+  screen width. The whole goal must be in view, including where the posts
+  meet the ground.
+- Measure how far the shooting spot is from the goal line, in feet.
+- Keep the pile of spare pucks out of the puck's path, one shooter at a
+  time, and a couple of seconds between shots. A clip can hold many shots.
+
+
+4. ANALYSE
+----------
+- From your phone: open Safari and type in the "On your phone" address
+  shown in the window (it looks like http://192.168.1.23:8000). Tap
+  "Choose clips" and pick your videos.
+- Or from the computer: AirDrop or copy the videos over and drag them onto
+  the page.
+- Fill in the shooting distance, the lens you filmed with (0.5x or 1x),
+  and what you were aiming at. Change the goal size only if the net isn't
+  6 ft x 4 ft (72 x 48 in). The page remembers these for next time.
+- Press Analyze. A 30-second clip at 1080p takes a minute or two; 4K
+  takes several.
+
+You get each shot's speed, where it went (marks on a picture of the net),
+whether it hit the target, and the video with the puck's path drawn on it.
+If the app can't find the net, it asks you to tap its four corners.
+
+
+5. HOW MUCH TO TRUST IT
+-----------------------
+Measured on real backyard clips so far:
+- 60 fps: most shots within about 5% on speed and a few inches on the
+  mark, but now and then one is off by up to about 20%.
+- Slow motion: the most accurate. Pick the lens in the form, because slow
+  motion doesn't record it.
+- 30 fps: not accurate enough to trust.
+It has only been tested in one backyard with one shooter so far. Clips
+where it gets something wrong are the most useful thing to send back.
+
+
+6. GOOD TO KNOW
+---------------
+- Sessions are saved in the "sessions" folder next to these files and come
+  back each time you start the app. To keep your history when you get a
+  newer version, copy that folder into the new one.
+- The phone can't open the address? Check both are on the same Wi-Fi (not
+  a guest network), and that you allowed network access when asked.
+- The video doesn't play on a Windows computer? The browser can't play the
+  iPhone's video format there. The speeds and marks are still right, and
+  it plays on the phone and on a Mac. Or set the iPhone to
+  Settings > Camera > Formats > Most Compatible.

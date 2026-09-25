@@ -91,6 +91,18 @@ def test_the_pipeline_prefers_a_field_of_view_given_over_the_files_lens():
     assert f == pytest.approx(1080.0) and source == "the field of view given"
 
 
+def test_a_lens_chosen_by_hand_is_used_only_when_the_file_is_silent():
+    cfg = Config()
+    cfg.camera.focal_35mm = Config().camera.LENS_CHOICES["1x"]
+    silent = pipeline.VideoInfo(path="x", width=1080, height=1920, fps=240.0, frame_count=10)
+    f, _, source = pipeline.known_focal_px(silent, cfg)
+    assert f == pytest.approx(28.0 * np.hypot(1080, 1920) / 43.27) and "chosen" in source
+    recorded = pipeline.VideoInfo(path="x", width=1080, height=1920, fps=60.0, frame_count=10,
+                                  lens="0.5x", focal_35mm=14.0)
+    f, _, source = pipeline.known_focal_px(recorded, cfg)
+    assert "as the phone recorded it" in source
+
+
 def test_the_rate_comes_from_the_frames_themselves(angled_clip):
     assert pipeline.decoded_frame_rate(angled_clip["path"]) == pytest.approx(angled_clip["fps"], rel=0.01)
 

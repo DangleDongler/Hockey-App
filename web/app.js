@@ -36,6 +36,32 @@ function describeFiles(files) {
 
 /* ---------------------------------------------------------------- upload */
 
+// The form remembers what was last used -- the same backyard, net and
+// shooting spot, session after session.  Browser storage can be missing or
+// refuse (private browsing), so every access is guarded.
+const REMEMBERED = ["distance", "offset", "lens", "target", "target-radius", "goal-w", "goal-h"];
+const SETTINGS_KEY = "shottracker.form";
+
+function restoreForm() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); } catch { saved = null; }
+  if (!saved || typeof saved !== "object") return;
+  for (const id of REMEMBERED) {
+    const el = $(id);
+    if (!el || saved[id] === undefined || saved[id] === null) continue;
+    if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === saved[id])) continue;
+    el.value = saved[id];
+  }
+}
+
+function rememberForm() {
+  const values = {};
+  for (const id of REMEMBERED) if ($(id)) values[id] = $(id).value;
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(values)); } catch { /* not kept; fine */ }
+}
+
+restoreForm();
+
 const fileInput = $("video-input");
 const fileDrop = $("file-drop");
 
@@ -75,6 +101,8 @@ $("upload-form").addEventListener("submit", async (e) => {
   if (num("distance") !== null) body.append("shot_distance_ft", num("distance"));
   body.append("shooter_offset_ft", num("offset") ?? 0);
   if (num("hfov") !== null) body.append("hfov_deg", num("hfov"));
+  if ($("lens").value) body.append("lens", $("lens").value);
+  rememberForm();
   if (num("fps") !== null) body.append("fps_override", num("fps"));
   if ($("target").value) body.append("target", $("target").value);
   if (num("target-radius") !== null) body.append("target_radius_in", num("target-radius"));

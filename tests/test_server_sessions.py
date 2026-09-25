@@ -100,3 +100,27 @@ def test_a_single_clip_still_uploads_as_video(client, angled_clip):
 
 def test_an_upload_with_no_video_is_refused(client):
     assert client.post("/api/analyze", data={"shot_distance_ft": "20"}).status_code == 400
+
+
+def test_an_unknown_lens_is_refused_before_anything_is_saved(client, angled_clip):
+    import app as server
+
+    before = set(server.DATA_DIR.iterdir()) if server.DATA_DIR.exists() else set()
+    with open(angled_clip["path"], "rb") as fh:
+        res = client.post("/api/analyze", files=[("videos", ("a.mp4", fh, "video/mp4"))],
+                          data={"shot_distance_ft": "20", "lens": "7x"})
+    assert res.status_code == 400 and "lens" in res.json()["detail"]
+    after = set(server.DATA_DIR.iterdir()) if server.DATA_DIR.exists() else set()
+    assert after == before
+
+
+def test_the_lens_chosen_is_kept_with_the_session(client, angled_clip):
+    import app as server
+
+    job_id, job = _upload(client, angled_clip["path"], lens="0.5x")
+    try:
+        assert job["status"] == "done", job.get("error")
+        cfg = server._config_from(server._settings(server.JOBS[job_id].cfg))
+        assert cfg.camera.focal_35mm == 14.0
+    finally:
+        client.delete(f"/api/jobs/{job_id}")

@@ -235,11 +235,20 @@ class CameraConfig:
 
     # Horizontal field of view of the frame as filmed, when known.
     hfov_deg: float | None = None
+    # The lens the player says they filmed with, as a 35 mm-equivalent focal
+    # length (see LENS_CHOICES).  Used when the file does not record its own:
+    # slow motion never does, and a phone may strip it when uploading.
+    focal_35mm: float | None = None
     use_lens_metadata: bool = True
     # The 35 mm-equivalent focal length a phone records is rounded to a whole
     # millimetre: about 4% at the ultra-wide's 13-14 mm.
     lens_metadata_spread: float = 0.04
     assumed_focal_frac: float = 0.80
+
+    # iPhone video, 35 mm-equivalent, as the phone records it for the
+    # stabilized video frame (the 0.5x lens measured 14 on an iPhone 17; the
+    # others are scaled from the lenses' still-photo figures the same way).
+    LENS_CHOICES = {"0.5x": 14.0, "1x": 28.0, "2x": 56.0}
 
     @staticmethod
     def frac_from_hfov(hfov_deg: float) -> float:

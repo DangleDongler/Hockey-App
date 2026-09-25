@@ -293,6 +293,10 @@ def known_focal_px(info: VideoInfo, cfg: Config) -> tuple[float, float, str] | N
         if f:
             what = f"{info.lens or 'the phone lens'}, {info.focal_35mm:g} mm equivalent, as the phone recorded it"
             return f, cfg.camera.lens_metadata_spread, what
+    if cfg.camera.focal_35mm:
+        f = Lens(focal_35mm=cfg.camera.focal_35mm).focal_px(info.width, info.height)
+        if f:
+            return f, 0.06, f"the lens chosen ({cfg.camera.focal_35mm:g} mm equivalent)"
     return None
 
 
