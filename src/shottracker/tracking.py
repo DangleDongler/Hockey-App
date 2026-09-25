@@ -268,14 +268,38 @@ def build_tracks(
                 newly.append(nxt)
 
         if not _accept(track, gw, cfg):
+            track = _straight_part(track, gw, cfg)
+            keep = {id(c) for c in track.candidates} if track is not None else set()
             # Put the detections back so a better seed can use them.
             for f, k in newly:
-                claimed[f][k] = False
-        else:
+                if id(index[f][k]) not in keep:
+                    claimed[f][k] = False
+        if track is not None:
             tracks.append(track)
 
     tracks.sort(key=lambda t: t.start_frame)
     return tracks
+
+
+def _straight_part(track: Track, goal_width_px: float, cfg: Config) -> Track | None:
+    """The clean flight inside a track that bends at either end.
+
+    Growing a track outward follows the puck wherever it goes: before a wrist
+    shot, along the ice as the blade drags it; after the impact, down the
+    netting.  Those bends make the whole track fail the straight-line test,
+    and the flight -- the part that matters -- would be thrown away with
+    them.  So detections are trimmed one at a time from whichever end is
+    further off the line, until what is left passes or is too short.
+    """
+    cs = list(track.candidates)
+    n_min = cfg.track.min_track_length
+    while len(cs) > n_min:
+        head, tail = Track(cs[1:]), Track(cs[:-1])
+        cs = list((head if head.path_residual_px() <= tail.path_residual_px() else tail).candidates)
+        t = Track(cs)
+        if _accept(t, goal_width_px, cfg):
+            return t
+    return None
 
 
 def _accept(track: Track, goal_width_px: float, cfg: Config) -> bool:
@@ -296,3 +320,35 @@ def filter_by_speed(tracks: list[Track], goal_width_px: float, fps: float, cfg: 
     min_step = cfg.track.min_mean_speed_goalwidths_per_sec * goal_width_px / max(fps, 1e-6)
     min_span = cfg.track.min_track_s * fps
     return [t for t in tracks if t.mean_step_px >= min_step and t.span_frames >= min_span]
+
+
+def clear_sightings(
+    track: Track, raw_xy: dict[int, np.ndarray], radius_px: float, max_neighbours: int
+) -> int:
+    """How many of a track's detections were made in uncluttered surroundings.
+
+    ``raw_xy`` holds every candidate found in each frame, before any cap, so
+    it measures how busy the background really was there.
+    """
+    n = 0
+    for c in track.candidates:
+        pts = raw_xy.get(c.frame)
+        if pts is None or not len(pts):
+            n += 1
+            continue
+        d = np.hypot(pts[:, 0] - c.x, pts[:, 1] - c.y)
+        n += int(((d > 1.0) & (d < radius_px)).sum() <= max_neighbours)
+    return n
+
+
+def filter_by_clutter(
+    tracks: list[Track], raw_xy: dict[int, np.ndarray], goal_width_px: float, fps: float, cfg: Config
+) -> tuple[list[Track], int]:
+    """Drop tracks seen almost only inside busy background.  Returns (kept, dropped)."""
+    tcfg = cfg.track
+    need = max(tcfg.min_clear_sightings, math.ceil(tcfg.min_clear_sightings_s * fps - 1e-9))
+    if need <= 0:
+        return tracks, 0
+    radius = tcfg.clutter_radius_frac * goal_width_px
+    kept = [t for t in tracks if clear_sightings(t, raw_xy, radius, tcfg.clutter_max_neighbours) >= need]
+    return kept, len(tracks) - len(kept)

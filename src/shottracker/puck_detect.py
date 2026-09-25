@@ -82,7 +82,8 @@ class PuckDetector:
         fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
         return fg
 
-    def detect(self, small_bgr: np.ndarray, frame_idx: int) -> list[Candidate]:
+    def detect(self, small_bgr: np.ndarray, frame_idx: int, limit: int | None = None) -> list[Candidate]:
+        """Candidates in one frame, best first; at most ``limit`` (default: the configured cap)."""
         pcfg = self.cfg.puck
         gray = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
         fg = self.foreground(small_bgr)
@@ -152,4 +153,82 @@ class PuckDetector:
             )
 
         out.sort(key=lambda c: c.score, reverse=True)
-        return out[: pcfg.max_candidates_per_frame]
+        return out[: limit or pcfg.max_candidates_per_frame]
+
+
+def recurring(
+    cands_by_frame: dict[int, list[Candidate]],
+    radius_px: float,
+    window: int,
+    gap: int,
+    min_hits: int,
+    chunk: int = 256,
+) -> set[tuple[int, int]]:
+    """Which candidates sit where something was seen both just before and just after.
+
+    A candidate counts as recurring when, within ``radius_px``, other
+    candidates turn up in at least ``min_hits`` distinct frames among the
+    ``window`` frames before it, and again among the ``window`` after --
+    ignoring the ``gap`` frames either side, where a slow puck can still
+    overlap itself.  Returns (frame, index in that frame's list) pairs.
+    """
+    from scipy.spatial import cKDTree
+
+    frames = sorted(f for f, v in cands_by_frame.items() if v)
+    if not frames:
+        return set()
+    F = np.concatenate([np.full(len(cands_by_frame[f]), f) for f in frames])
+    K = np.concatenate([np.arange(len(cands_by_frame[f])) for f in frames])
+    P = np.array([(c.x, c.y) for f in frames for c in cands_by_frame[f]], dtype=np.float64)
+    out: set[tuple[int, int]] = set()
+    # In time chunks, so memory follows the chunk, not the clip.
+    for lo in range(frames[0], frames[-1] + 1, chunk):
+        core = np.nonzero((F >= lo) & (F < lo + chunk))[0]
+        if not len(core):
+            continue
+        ext = np.nonzero((F >= lo - window) & (F < lo + chunk + window))[0]
+        pairs = cKDTree(P[core]).sparse_distance_matrix(cKDTree(P[ext]), radius_px, output_type="ndarray")
+        if not len(pairs):
+            continue
+        a, b = core[pairs["i"]], ext[pairs["j"]]
+        df = F[b] - F[a]
+        for side in (-1, 1):
+            sel = (side * df >= gap) & (side * df <= window)
+            # Distinct frames per candidate: several fragments of one leaf in
+            # one frame are one sighting.
+            keys = np.unique(a[sel] * (2 * window + 1) + (df[sel] + window))
+            hits = np.bincount(keys // (2 * window + 1), minlength=len(F))
+            if side == -1:
+                before = hits
+            else:
+                both = np.nonzero(np.minimum(before, hits) >= min_hits)[0]
+                out.update(zip(F[both].tolist(), K[both].tolist()))
+    return out
+
+
+def demote_recurring(
+    cands_by_frame: dict[int, list[Candidate]],
+    radius_px: float,
+    fps: float,
+    cfg: Config,
+) -> tuple[dict[int, list[Candidate]], int, int]:
+    """Rank recurring clutter last in every frame, then apply the per-frame cap.
+
+    Returns (candidates, how many were demoted, how many frames were still
+    full of candidates that were not clutter).
+    """
+    pcfg = cfg.puck
+    window = max(pcfg.recurring_min_window_frames, int(round(pcfg.recurring_window_s * fps)))
+    gap = max(2, int(round(0.0125 * fps)))
+    flagged = recurring(cands_by_frame, radius_px, window, gap, pcfg.recurring_min_hits)
+    cap = pcfg.max_candidates_per_frame
+    out: dict[int, list[Candidate]] = {}
+    busy = 0
+    for f, lst in cands_by_frame.items():
+        clear = [c for k, c in enumerate(lst) if (f, k) not in flagged]
+        clutter = [c for k, c in enumerate(lst) if (f, k) in flagged]
+        busy += len(clear) >= cap
+        kept = (clear + clutter)[:cap]
+        if kept:
+            out[f] = kept
+    return out, len(flagged), busy

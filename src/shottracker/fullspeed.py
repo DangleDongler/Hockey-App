@@ -57,8 +57,11 @@ def decimate(path: str, out_dir: str, rates=(30, 60), cfg: Config | None = None)
             continue  # only whole-frame steps are real recordings
         step = int(round(step))
         for phase in range(step):
-            dest = os.path.join(out_dir, f"{rate:g}fps_start{phase}.mp4")
-            writer = cv2.VideoWriter(dest, cv2.VideoWriter_fourcc(*"mp4v"), rate, (w, h))
+            # Lossless, so what is measured is the frame rate and nothing else:
+            # a lossy re-encode blurs thin goal pipes and small pucks further
+            # than the phone's own encoder does.
+            dest = os.path.join(out_dir, f"{rate:g}fps_start{phase}.mkv")
+            writer = cv2.VideoWriter(dest, cv2.VideoWriter_fourcc(*"FFV1"), rate, (w, h))
             for f in frames[phase::step]:
                 writer.write(f)
             writer.release()

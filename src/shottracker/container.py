@@ -10,6 +10,11 @@ The sound gives it away.  It is not slowed along with the picture, so a baked
 slow-motion clip carries eight seconds of video and about one second of sound.
 The ratio, times the playback rate, is the rate it was filmed at.
 
+The file also says which lens filmed it.  An iPhone writes the lens and its
+35 mm-equivalent focal length into each ordinary video (not into slow motion),
+and that fixes the camera's field of view outright -- far better than solving
+for it from the goal's outline, which a small, square-on net barely constrains.
+
 This reads the MP4/QuickTime box structure directly -- the video and sound
 tracks' durations and the video's frame count -- because OpenCV exposes
 neither the sound track nor per-track durations.
@@ -37,6 +42,10 @@ MIN_AUDIO_S = 0.2
 MAX_MOOV_BYTES = 64 * 1024 * 1024
 
 _CONTAINERS = {b"moov", b"trak", b"mdia", b"minf", b"stbl"}
+# 35 mm film's diagonal: "35 mm equivalent" focal lengths are scaled to it.
+FILM_DIAGONAL_MM = 43.27
+LENS_MODEL_KEY = "com.apple.quicktime.camera.lens_model"
+FOCAL_35MM_KEY = "com.apple.quicktime.camera.focal_length.35mm_equivalent"
 
 
 @dataclass
@@ -60,6 +69,20 @@ class ContainerTiming:
     @property
     def audio(self) -> TrackTiming | None:
         return self.first("soun")
+
+
+@dataclass
+class Lens:
+    """The lens a clip was filmed with, as the phone recorded it."""
+
+    model: str | None = None
+    focal_35mm: float | None = None
+
+    def focal_px(self, width: int, height: int) -> float | None:
+        """Focal length in pixels of a ``width`` x ``height`` frame."""
+        if not self.focal_35mm or self.focal_35mm <= 0:
+            return None
+        return self.focal_35mm * float((width ** 2 + height ** 2) ** 0.5) / FILM_DIAGONAL_MM
 
 
 @dataclass
@@ -170,6 +193,79 @@ def read_timing(path: str) -> ContainerTiming | None:
     except (struct.error, IndexError):
         return None
     return timing
+
+
+def _metadata_items(buf: bytes, start: int, end: int) -> dict[str, object]:
+    """Key/value pairs of one QuickTime ``meta`` box (the ``keys``/``ilst`` form)."""
+    out: dict[str, object] = {}
+    # QuickTime's meta is a plain box; the ISO form carries 4 bytes of flags.
+    for first in (start, start + 4):
+        kids = list(_boxes(buf, first, end))
+        if any(k[0] == b"keys" for k in kids):
+            break
+    else:
+        return out
+    keys = next(k for k in kids if k[0] == b"keys")
+    ilst = next((k for k in kids if k[0] == b"ilst"), None)
+    if ilst is None:
+        return out
+    count = struct.unpack(">I", buf[keys[1] + 4:keys[1] + 8])[0]
+    names, off = [], keys[1] + 8
+    for _ in range(count):
+        size = struct.unpack(">I", buf[off:off + 4])[0]
+        if size < 8:
+            break
+        names.append(buf[off + 8:off + size].decode("utf-8", "replace"))
+        off += size
+    for kind, s, e in _boxes(buf, ilst[1], ilst[2]):
+        index = struct.unpack(">I", kind)[0]
+        if not 0 < index <= len(names):
+            continue
+        data = next((b for b in _boxes(buf, s, e) if b[0] == b"data"), None)
+        if data is None:
+            continue
+        kind_code = struct.unpack(">I", buf[data[1]:data[1] + 4])[0] & 0xFFFFFF
+        value = buf[data[1] + 8:data[2]]
+        if kind_code == 1:
+            out[names[index - 1]] = value.decode("utf-8", "replace")
+        elif kind_code == 23 and len(value) >= 4:
+            out[names[index - 1]] = struct.unpack(">f", value[:4])[0]
+        elif kind_code == 24 and len(value) >= 8:
+            out[names[index - 1]] = struct.unpack(">d", value[:8])[0]
+    return out
+
+
+def _meta_boxes(buf: bytes, start: int, end: int, depth: int = 0):
+    for kind, s, e in _boxes(buf, start, end):
+        if kind == b"meta":
+            yield s, e
+        elif kind in (b"trak", b"udta") and depth < 2:
+            yield from _meta_boxes(buf, s, e, depth + 1)
+
+
+def read_lens(path: str) -> Lens | None:
+    """The lens and focal length the phone recorded, or None if it recorded none."""
+    try:
+        moov = _read_moov(path)
+    except OSError:
+        return None
+    if not moov:
+        return None
+    items: dict[str, object] = {}
+    try:
+        for s, e in _meta_boxes(moov, 0, len(moov)):
+            items.update(_metadata_items(moov, s, e))
+    except (struct.error, IndexError):
+        return None
+    model = items.get(LENS_MODEL_KEY)
+    focal = items.get(FOCAL_35MM_KEY)
+    try:
+        focal = float(focal) if focal is not None else None
+    except (TypeError, ValueError):
+        focal = None
+    if model is None and focal is None:
+        return None
+    return Lens(model=str(model) if model is not None else None, focal_35mm=focal)
 
 
 def detect_slow_motion(timing: ContainerTiming | None, playback_fps: float) -> SlowMotion:

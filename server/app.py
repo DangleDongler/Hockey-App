@@ -24,7 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from shottracker.config import CameraConfig, Config
+from shottracker.config import Config
 from shottracker.history import progress, rescore, session_record
 from shottracker.net_detect import detect_net_in_frame
 from shottracker.pipeline import SessionResult, analyze
@@ -105,6 +105,7 @@ def _settings(cfg: Config) -> dict[str, Any]:
         "shot_distance_ft": cfg.speed.shot_distance_ft,
         "shooter_offset_ft": cfg.speed.shooter_offset_ft,
         "assumed_focal_frac": cfg.camera.assumed_focal_frac,
+        "hfov_deg": cfg.camera.hfov_deg,
         "fps_override": cfg.fps_override,
         "goal": {"mouth_width_in": cfg.goal.mouth_width_in, "mouth_height_in": cfg.goal.mouth_height_in},
         "target": {"kind": cfg.target.kind, "radius_in": cfg.target.radius_in,
@@ -117,6 +118,7 @@ def _config_from(settings: dict[str, Any]) -> Config:
     cfg.speed.shot_distance_ft = settings.get("shot_distance_ft")
     cfg.speed.shooter_offset_ft = settings.get("shooter_offset_ft") or 0.0
     cfg.camera.assumed_focal_frac = settings.get("assumed_focal_frac") or cfg.camera.assumed_focal_frac
+    cfg.camera.hfov_deg = settings.get("hfov_deg")
     cfg.fps_override = settings.get("fps_override")
     goal = settings.get("goal") or {}
     cfg.goal.mouth_width_in = goal.get("mouth_width_in") or cfg.goal.mouth_width_in
@@ -278,7 +280,7 @@ async def create_job(
     cfg.speed.shot_distance_ft = shot_distance_ft
     cfg.speed.shooter_offset_ft = shooter_offset_ft
     if hfov_deg:
-        cfg.camera.assumed_focal_frac = CameraConfig.frac_from_hfov(hfov_deg)
+        cfg.camera.hfov_deg = hfov_deg
     if fps_override:
         cfg.fps_override = fps_override
     if goal_width_in:

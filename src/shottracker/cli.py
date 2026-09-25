@@ -9,7 +9,7 @@ import sys
 
 import numpy as np
 
-from .config import CameraConfig, Config
+from .config import Config
 from .pipeline import analyze
 from .report import format_session_report, format_text_report, shot_chart_svg
 from .session import ShotSession
@@ -34,7 +34,7 @@ def _build_config(args) -> Config:
     if args.speed_method:
         cfg.speed.method = args.speed_method
     if getattr(args, "hfov", None):
-        cfg.camera.assumed_focal_frac = CameraConfig.frac_from_hfov(args.hfov)
+        cfg.camera.hfov_deg = args.hfov
     if getattr(args, "target", None):
         cfg.target.kind = args.target
     if getattr(args, "target_at", None):
@@ -183,8 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--speed-method", choices=["auto", "time_of_flight", "ballistic_3d", "goal_plane"],
                    default="auto")
     a.add_argument("--hfov", type=float, metavar="DEG",
-                   help="your camera's horizontal field of view in degrees. Only used when the "
-                        "view is too square-on for the goal to reveal it; phones are 60-70.")
+                   help="the horizontal field of view of the video as filmed, in degrees. Normal "
+                        "iPhone video records its lens in the file, so this is only needed for slow "
+                        "motion, which does not: about 74 for the 0.5x lens held upright, 42 for 1x.")
     a.add_argument("--target", choices=TARGET_CHOICES,
                    help="what the player was aiming at; each shot is scored against it. "
                         "Groups (top_shelf, any_corner, low_corners) score each shot against "

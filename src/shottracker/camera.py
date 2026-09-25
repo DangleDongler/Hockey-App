@@ -41,6 +41,9 @@ class CameraModel:
     residual_px: float       # reprojection error on the four goal corners
     focal_assumed: bool = False   # True when the view could not determine it
     focal_spread: float = 0.0     # relative scatter of the focal solve, 0 when assumed
+    # Where the focal length came from: "goal" (solved from the outline),
+    # "known" (the phone's own record, or the player's), or "assumed".
+    focal_source: str = "goal"
 
     @property
     def position(self) -> np.ndarray:
@@ -172,6 +175,8 @@ def calibrate_from_homography(
     corners_image=None,
     assumed_focal_px: float | None = None,
     corner_jitter_px: float = FOCAL_JITTER_PX,
+    known_focal_px: float | None = None,
+    known_focal_spread: float = 0.0,
 ) -> CameraModel | None:
     """Solve for intrinsics and pose from a plane-to-image homography.
 
@@ -190,7 +195,8 @@ def calibrate_from_homography(
     pose is then only as good as that guess, and the model says so through
     ``focal_assumed``.  With no assumption to fall back on, this returns None,
     which is a statement that the geometry is not observable rather than a
-    failure to try.
+    failure to try.  ``known_focal_px`` -- the lens as the phone recorded it,
+    or as the player gave it -- skips the solve altogether.
     """
     H = np.asarray(H, dtype=np.float64)
     w, h = image_size
@@ -199,11 +205,15 @@ def calibrate_from_homography(
     f = 0.0
     focal_assumed = True
     focal_spread = 0.0
-    if corners_goal is not None and corners_image is not None:
+    source = "assumed"
+    if known_focal_px is not None and known_focal_px > 0:
+        f, focal_spread, focal_assumed, source = float(known_focal_px), float(known_focal_spread), False, "known"
+    elif corners_goal is not None and corners_image is not None:
         stable = _stable_focal(corners_goal, corners_image, image_size, corner_jitter_px)
         if stable is not None and 0.25 * w <= stable[0] <= 6.0 * w:
             f, focal_spread = stable
             focal_assumed = False
+            source = "goal"
 
     if focal_assumed:
         if assumed_focal_px is None:
@@ -250,5 +260,5 @@ def calibrate_from_homography(
 
     return CameraModel(
         K=K, R=R, t=t, focal_px=f, residual_px=residual,
-        focal_assumed=focal_assumed, focal_spread=focal_spread,
+        focal_assumed=focal_assumed, focal_spread=focal_spread, focal_source=source,
     )

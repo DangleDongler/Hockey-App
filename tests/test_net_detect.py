@@ -53,9 +53,31 @@ def test_consensus_rejects_a_frame_that_disagrees():
     good = np.array([[100.0, 100], [300, 100], [300, 240], [100, 240]])
     quads = [good + np.random.default_rng(i).normal(0, 0.5, (4, 2)) for i in range(6)]
     quads.append(good + 400.0)  # one wildly wrong frame
-    quad, keep = consensus_quad(quads, tol_frac=0.06)
+    quad, keep, steady = consensus_quad(quads, tol_frac=0.06)
     assert len(keep) == 6
     assert np.linalg.norm(quad - good, axis=1).max() < 3.0
+
+
+def test_consensus_settles_a_crossbar_read_two_ways_by_majority():
+    # Seen on a real 4K clip: the posts' feet were found identically in every
+    # frame, but some frames took a band of netting just under the crossbar
+    # for its top edge.  A steady camera is not a moving one; the crossbar
+    # most frames agree on wins.
+    bar = np.array([[100.0, 100], [300, 90], [305, 240], [98, 240]])
+    low = bar + np.array([[0, 12], [0, 22], [0, 0], [0, 0]])  # netting, not bar
+    quads = [bar.copy() for _ in range(7)] + [low.copy() for _ in range(5)]
+    quad, keep, steady = consensus_quad(quads, tol_frac=0.06)
+    assert len(steady) == 12
+    assert sorted(keep) == list(range(7))
+    assert np.linalg.norm(quad - bar, axis=1).max() < 1e-6
+
+
+def test_consensus_finds_the_majority_when_the_camera_was_bumped():
+    good = np.array([[100.0, 100], [300, 100], [300, 240], [100, 240]])
+    quads = [good.copy() for _ in range(7)] + [good + 60.0 for _ in range(5)]
+    quad, keep, steady = consensus_quad(quads, tol_frac=0.06)
+    assert sorted(steady) == list(range(7))
+    assert np.linalg.norm(quad - good, axis=1).max() < 1e-6
 
 
 def test_reports_when_the_camera_is_square_to_the_net(head_on_clip):

@@ -16,14 +16,14 @@ import cv2
 import numpy as np
 
 from .camera import CameraModel, calibrate_from_homography
-from .config import PUCK_DIAMETER_IN, Config
-from .container import detect_slow_motion, read_timing
+from .config import PUCK_DIAMETER_IN, CameraConfig, Config
+from .container import Lens, detect_slow_motion, read_lens, read_timing
 from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
 from .net_detect import NetDetection, detect_net
-from .puck_detect import Candidate, PuckDetector, build_background
+from .puck_detect import Candidate, PuckDetector, build_background, demote_recurring
 from .shots import Shot, approaches_goal, dedupe_shots, shot_from_track
 from .stabilize import CameraMotion, estimate_motion, interpolate, measure
-from .tracking import Track, build_tracks, filter_by_speed
+from .tracking import Track, build_tracks, filter_by_clutter, filter_by_speed
 
 
 @dataclass
@@ -38,6 +38,9 @@ class VideoInfo:
     # at (slow motion with the slowdown baked in).  Anything that seeks in or
     # re-encodes the file itself goes by this, not by ``fps``.
     playback_fps: float | None = None
+    # The lens, as the phone recorded it in the file (ordinary video only).
+    lens: str | None = None
+    focal_35mm: float | None = None
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -50,6 +53,8 @@ class VideoInfo:
             "frame_count": self.frame_count,
             "duration_s": round(self.frame_count / self.fps, 2) if self.fps else None,
             "fps_source": self.fps_source,
+            "lens": self.lens,
+            "focal_35mm": self.focal_35mm,
         }
 
 
@@ -208,6 +213,29 @@ def _busy_scene_warning(
     return head + how + "; prop the phone against something steady rather than holding it."
 
 
+def decoded_frame_rate(path: str, frames: int = 40) -> float | None:
+    """The rate the frames that actually play are spaced at, from their timestamps.
+
+    A phone's header can disagree with its own frames.  iPhone 60 fps video
+    starts with a few frames at 30 fps that the file's edit list then trims,
+    and the header's average still counts them: one real clip says 52.1 fps
+    while every frame that plays is 1/60 s apart -- a 15% error in every
+    speed if the header is believed.
+    """
+    cap = cv2.VideoCapture(path)
+    stamps: list[float] = []
+    try:
+        while len(stamps) < frames and cap.grab():
+            stamps.append(cap.get(cv2.CAP_PROP_POS_MSEC))
+    finally:
+        cap.release()
+    gaps = np.diff(stamps)
+    gaps = gaps[gaps > 0]
+    if len(gaps) < 3:
+        return None
+    return 1000.0 / float(np.median(gaps))
+
+
 def probe(path: str, cfg: Config) -> VideoInfo:
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
@@ -220,7 +248,20 @@ def probe(path: str, cfg: Config) -> VideoInfo:
     finally:
         cap.release()
 
+    if fps > 1.0 and not cfg.fps_override:
+        decoded = decoded_frame_rate(path)
+        if decoded and abs(decoded / fps - 1.0) > 0.02:
+            note = (f"the file says {fps:.1f} fps, but the frames that play are 1/{decoded:.0f} s apart; "
+                    f"timing uses {decoded:.0f} fps")
+            fps = decoded
+        else:
+            note = None
+    else:
+        note = None
     info = VideoInfo(path=path, width=width, height=height, fps=fps, frame_count=max(count, 0))
+    if note:
+        info.notes.append(note)
+        info.fps_source = "frame timestamps"
     if cfg.fps_override:
         info.fps, info.fps_source = float(cfg.fps_override), "override"
     elif fps <= 1.0:
@@ -234,7 +275,25 @@ def probe(path: str, cfg: Config) -> VideoInfo:
     if fps > 1.0 and abs(info.fps - fps) > 0.01 * fps:
         # Timing now runs at a different rate from the file itself.
         info.playback_fps = fps
+    lens = read_lens(path)
+    if lens is not None:
+        info.lens, info.focal_35mm = lens.model, lens.focal_35mm
     return info
+
+
+def known_focal_px(info: VideoInfo, cfg: Config) -> tuple[float, float, str] | None:
+    """The lens's focal length in pixels when it is known rather than solved for.
+
+    Returns (focal, relative uncertainty, where it came from), or None.
+    """
+    if cfg.camera.hfov_deg:
+        return CameraConfig.frac_from_hfov(cfg.camera.hfov_deg) * info.width, 0.03, "the field of view given"
+    if cfg.camera.use_lens_metadata and info.focal_35mm:
+        f = Lens(focal_35mm=info.focal_35mm).focal_px(info.width, info.height)
+        if f:
+            what = f"{info.lens or 'the phone lens'}, {info.focal_35mm:g} mm equivalent, as the phone recorded it"
+            return f, cfg.camera.lens_metadata_spread, what
+    return None
 
 
 # Seeking in phone video decodes forward from the last keyframe -- a quarter
@@ -327,13 +386,18 @@ def analyze(
     warnings.extend(net.notes)
 
     plane = GoalPlane(net.quad, cfg.goal)
+    known = known_focal_px(info, cfg)
     cam = calibrate_from_homography(
         plane.H,
         (info.width, info.height),
         outer_rect(cfg.goal),
         plane.image_quad,
         assumed_focal_px=cfg.camera.assumed_focal_frac * info.width,
+        known_focal_px=known[0] if known else None,
+        known_focal_spread=known[1] if known else 0.0,
     )
+    if cam is not None and known:
+        warnings.append(f"lens: {known[2]}")
     if cam is None:
         warnings.append(
             "could not recover the camera geometry from the goal outline; speed falls back to "
@@ -380,6 +444,9 @@ def analyze(
     # --- pass 2: puck candidates, every frame --------------------------
     report("tracking the puck", 0.3)
     cands_by_frame: dict[int, list[Candidate]] = {}
+    # Keep everything for now when clutter is to be sorted out over the
+    # whole clip; the per-frame cap is applied after that.
+    raw_cap = cfg.puck.raw_candidates_per_frame if cfg.puck.demote_recurring else None
     cap = cv2.VideoCapture(path)
     idx = 0
     try:
@@ -391,7 +458,7 @@ def analyze(
             small = aligned
             if scale < 1.0:
                 small = cv2.resize(aligned, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-            found = detector.detect(small, idx)
+            found = detector.detect(small, idx, limit=raw_cap)
             if found:
                 cands_by_frame[idx] = found
             idx += 1
@@ -403,13 +470,21 @@ def analyze(
         info.frame_count = idx
 
     report("assembling shots", 0.85)
-    saturated = sum(
-        1 for v in cands_by_frame.values() if len(v) >= cfg.puck.max_candidates_per_frame
-    ) / max(len(cands_by_frame), 1)
+    raw_xy = {f: np.array([(c.x, c.y) for c in v], dtype=np.float64) for f, v in cands_by_frame.items()}
+    if cfg.puck.demote_recurring:
+        n_frames = max(len(cands_by_frame), 1)
+        cands_by_frame, _, busy = demote_recurring(
+            cands_by_frame, puck_px_small / scale, info.fps, cfg)
+        saturated = busy / n_frames
+    else:
+        saturated = sum(
+            1 for v in cands_by_frame.values() if len(v) >= cfg.puck.max_candidates_per_frame
+        ) / max(len(cands_by_frame), 1)
     if saturated > cfg.puck.saturated_frame_warn_frac:
         warnings.append(_busy_scene_warning(saturated, small_samples, scale, motion.needed, cfg))
     tracks = build_tracks(cands_by_frame, goal_width_px, cfg, warnings)
     tracks = filter_by_speed(tracks, goal_width_px, info.fps, cfg)
+    tracks, in_clutter = filter_by_clutter(tracks, raw_xy, goal_width_px, info.fps, cfg)
 
     zones = build_zones(cfg.goal)
     shots: list[Shot] = []
@@ -428,6 +503,12 @@ def analyze(
     # drawn for something that was merged away.
     kept_tracks = [track_of[id(s)] for s in shots]
 
+    if in_clutter:
+        warnings.append(
+            f"not counted as shots: {in_clutter} short line(s) of flickers in busy background -- leaves "
+            "moving in the sun, netting rippling -- that happened to line up. A puck crosses clear "
+            "background for most of its flight."
+        )
     if started_at_goal:
         warnings.append(
             f"not counted as shots: {started_at_goal} bit(s) of movement that started on the goal itself, "

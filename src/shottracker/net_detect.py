@@ -661,21 +661,43 @@ def detect_net_in_frame(
     return quad / scale, conf, method
 
 
+def _largest_group(points: np.ndarray, tol: float) -> np.ndarray:
+    """Indices of the biggest set of readings that agree with one of them.
+
+    ``points`` is (n, k, 2): k corners per reading.  Two readings agree when
+    every corner is within ``tol`` pixels.  Voting like this, rather than
+    comparing everything to the median, still finds the majority when the
+    readings split two ways, where a median can land between the camps and
+    agree with neither.
+    """
+    d = np.linalg.norm(points[:, None] - points[None, :], axis=3).max(axis=2)
+    agree = d <= tol
+    return np.nonzero(agree[int(np.argmax(agree.sum(axis=1)))])[0]
+
+
 def consensus_quad(
     quads: list[np.ndarray], tol_frac: float
-) -> tuple[np.ndarray, list[int]] | None:
-    """Median outline over frames, keeping only the frames that agree with it."""
+) -> tuple[np.ndarray, list[int], list[int]] | None:
+    """One outline from many frames' readings of it.
+
+    Settled in two steps, because the goal's two edges go wrong in different
+    ways.  The posts' feet stand on the ground and are found the same way in
+    every frame, so they say whether the camera held still.  The crossbar is
+    the edge that gets misread -- a band of netting just under it can pass
+    for its edge in some frames -- so among the frames where the feet agree,
+    it is settled by the reading most of them share.
+
+    Returns (outline, frames used for it, frames in which the camera was
+    where it is for most of the clip).
+    """
     if not quads:
         return None
-    stack = np.stack([order_quad(q) for q in quads])  # (n, 4, 2)
-    median = np.median(stack, axis=0)
-    tol = tol_frac * quad_diagonal(median)
-    err = np.linalg.norm(stack - median[None], axis=2).max(axis=1)
-    keep = np.nonzero(err <= max(tol, 2.0))[0]
-    if len(keep) == 0:
-        return median, []
+    stack = np.stack([order_quad(q) for q in quads])  # (n, 4, 2): TL, TR, BR, BL
+    tol = max(tol_frac * quad_diagonal(np.median(stack, axis=0)), 2.0)
+    steady = _largest_group(stack[:, 2:], tol)
+    keep = steady[_largest_group(stack[steady, :2], tol)]
     refined = np.median(stack[keep], axis=0)
-    return refined, keep.tolist()
+    return refined, keep.tolist(), steady.tolist()
 
 
 def detect_net(
@@ -714,14 +736,17 @@ def detect_net(
     if agreed is None:
         notes.append("the candidate outlines did not agree well enough to combine")
         return None
-    quad, keep = agreed
+    quad, keep, steady = agreed
 
-    n_used = len(keep)
-    if n_used >= cfg.net.min_agreeing_frames and n_used < cfg.net.min_agreement_frac * len(frames):
+    n_used, n_steady = len(keep), len(steady)
+    # Moved means the frames that found the goal disagree about where it is.
+    # Frames that found nothing -- the shooter in the way, a thin pipe lost in
+    # glare -- say nothing about the camera.
+    if n_used >= cfg.net.min_agreeing_frames and n_steady < cfg.net.min_agreement_frac * len(quads):
         notes.append(
-            f"the goal was found, but only {n_used} of {len(frames)} sampled frames put it in the same "
-            "place, so no one outline fits the whole clip -- the camera most likely moved. Propping the "
-            "phone fixes it; meanwhile the net can be marked on a frame near the shots that matter."
+            f"the goal was found, but only {n_steady} of the {len(quads)} frames it was found in put it in "
+            "the same place, so no one outline fits the whole clip -- the camera most likely moved. Propping "
+            "the phone fixes it; meanwhile the net can be marked on a frame near the shots that matter."
         )
         return None
     if n_used < cfg.net.min_agreeing_frames:
@@ -732,6 +757,11 @@ def detect_net(
             "Marking the four corners by hand solves it for good on a net that does not move."
         )
         return None
+    if n_used < cfg.net.min_agreement_frac * n_steady:
+        notes.append(
+            f"the crossbar was hard to pick out: {n_used} of {n_steady} frames agreed on where its top "
+            "edge is. Check the outline sits on the top of the bar; if not, mark the corners by hand."
+        )
 
     method_counts: dict[str, int] = {}
     for i in keep or range(len(methods)):
@@ -741,7 +771,9 @@ def detect_net(
         notes.append("fell back to hull fitting; the outline may sit slightly outside the pipe")
 
     base_conf = float(np.mean([confs[i] for i in keep])) if keep else float(np.mean(confs))
-    agreement = n_used / float(max(len(frames), 1))
+    # How much of the clip the outline holds for, discounted by how
+    # unanimous the crossbar reading was.
+    agreement = n_steady / float(max(len(frames), 1)) * (0.5 + 0.5 * n_used / float(max(n_steady, 1)))
     confidence = float(np.clip(0.35 * base_conf + 0.65 * agreement, 0.0, 1.0))
 
     plane = GoalPlane(quad, cfg.goal)

@@ -68,6 +68,9 @@ def test_the_scene_really_does_tempt_the_tracker(backyard):
     cfg.shot.min_start_outside_goal = -1e9
     cfg.shot.min_approach_goal = -1e9
     cfg.shot.min_shot_separation_s = 0.0
+    cfg.puck.demote_recurring = False
+    cfg.track.min_clear_sightings = 0
+    cfg.track.min_clear_sightings_s = 0.0
     assert len(analyze(backyard["path"], cfg).shots) > len(SHOTS)
 
 

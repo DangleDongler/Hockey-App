@@ -98,7 +98,11 @@ class NetDetectConfig:
     post_low_hue_sat_min: int = 100
     post_min_aspect: float = 6.0          # height / width
     post_max_width_frac: float = 0.04     # of the frame width
-    post_min_height_frac: float = 0.04    # of the frame height
+    # Of the frame height.  A net across a backyard filmed from beside the
+    # shooter stands about 4% of a portrait frame tall, and glare can eat the
+    # top of a post, so the floor sits well under that; the pairing checks
+    # (level feet, spacing, a crossbar between) keep out lone red uprights.
+    post_min_height_frac: float = 0.025
     # Structural support below this counts as the colour method not having
     # really found pipe, and the shape method is tried instead.
     colour_method_trust: float = 0.8
@@ -155,6 +159,21 @@ class PuckDetectConfig:
     dark_weight: float = 0.45        # how much darkness contributes to the score
 
     max_candidates_per_frame: int = 14
+    # Clutter that stays put -- leaves flickering in the wind, rippling
+    # netting, a fence in the sun -- turns up at the same spot frame after
+    # frame, where a puck passes any one spot once.  Candidates seen at the
+    # same place (within a puck's width) in several frames just before *and*
+    # just after are ranked below every other candidate before the cap above
+    # is applied.  Before and after both, so the puck landing in netting that
+    # only moves once it is hit keeps its place.  On a real 240 fps clip in
+    # the wind this let through all 60 puck sightings while demoting three
+    # quarters of the clutter; without it the puck ranked 7th to 25th of ~90
+    # candidates a frame and was capped away.
+    demote_recurring: bool = True
+    raw_candidates_per_frame: int = 150
+    recurring_window_s: float = 0.125
+    recurring_min_window_frames: int = 8
+    recurring_min_hits: int = 3       # distinct frames, on each side
     # A frame pinned at the cap means the foreground model is failing (usually
     # a camera that moved).  Past this fraction of frames, say so.
     saturated_frame_warn_frac: float = 0.5
@@ -181,6 +200,20 @@ class TrackingConfig:
     # real departure is the arc gravity puts on it.
     max_line_residual_frac: float = 0.04   # of the goal width
 
+    # Flickering leaves near the sun, rippling netting: where dozens of
+    # things move in every frame, four or five of them line up by chance,
+    # and the result looks like a short, straight flight.  A real puck spends
+    # most of its flight crossing clear background.  So a track must have
+    # this much time's worth of sightings (and never fewer than the floor)
+    # with no more than ``clutter_max_neighbours`` other candidates within
+    # ``clutter_radius_frac`` goal widths, in that frame.  Measured on real
+    # clips at 60 fps: every chance line had at most 3 such sightings, every
+    # real shot at least 7.
+    min_clear_sightings_s: float = 0.075
+    min_clear_sightings: int = 3
+    clutter_radius_frac: float = 0.5
+    clutter_max_neighbours: int = 10
+
     ransac_iterations: int = 60
     # Seed pairs grow with the square of the candidates per frame, so a bad
     # foreground model can make the search explode.  This is the safety valve.
@@ -189,15 +222,23 @@ class TrackingConfig:
 
 @dataclass
 class CameraConfig:
-    """What we assume about the lens.
+    """What we know, or assume, about the lens.
 
-    The goal's own outline reveals the focal length, but only when the camera
-    is off to one side; a square-on view carries no such information.  This is
-    the fallback, expressed as focal length in units of image width.  0.80 is
-    about 64 degrees horizontally, typical of phone video.  If you know your
-    phone's field of view, setting it removes the guess.
+    In order of preference: a field of view the player gives; the focal
+    length the phone wrote into the file; the one the goal's own outline
+    implies; and, last, a typical phone lens.  The outline only reveals the
+    focal length when the camera is well off to one side -- on a real clip
+    filmed from the ground 26 ft out it came out 40% short, which put the
+    camera two feet up and nearly behind the shooter instead of two inches
+    off the ground and seven feet to the side.
     """
 
+    # Horizontal field of view of the frame as filmed, when known.
+    hfov_deg: float | None = None
+    use_lens_metadata: bool = True
+    # The 35 mm-equivalent focal length a phone records is rounded to a whole
+    # millimetre: about 4% at the ultra-wide's 13-14 mm.
+    lens_metadata_spread: float = 0.04
     assumed_focal_frac: float = 0.80
 
     @staticmethod
