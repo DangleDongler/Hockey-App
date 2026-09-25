@@ -77,8 +77,9 @@ If the app can't find the net, it asks you to tap its four corners.
 5. HOW MUCH TO TRUST IT
 -----------------------
 Measured on real backyard clips so far:
-- 60 fps: most shots within about 4% on speed and 2 inches on the mark,
-  but now and then one is off by up to about 20% on speed.
+- 60 fps: most shots within about 4% on speed and 2-3 inches on the mark;
+  now and then one is off by up to about 15% on speed. The two shots timed
+  by hand read 47.0 and 50.4 mph against 47 and 50.
 - Slow motion: the most accurate. Pick the lens in the form, because slow
   motion doesn't record it.
 - 30 fps: not accurate enough to trust.
