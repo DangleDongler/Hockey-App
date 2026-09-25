@@ -363,12 +363,14 @@ class ShotConfig:
     # its line.  From straight behind the shooter, how fast the puck closes on
     # the goal line barely shows, and the timing is worse than none.
     min_view_angle_for_timing_deg: float = 25.0
-    # And when the last sighting comes more than this long after the timed
-    # crossing, it is past the goal line -- netting springing back, or
-    # a leaf the track picked up -- and the mark goes where the puck was at
-    # the crossing instead.  Only at mark_at_crossing_min_fps and up: at 30
-    # fps the timing itself is too coarse to overrule a sighting.
-    mark_at_crossing: bool = False
+    # And a last sighting, after missing frames, that comes more than this
+    # long after the crossing timed from the sightings before it was past the
+    # goal line -- netting springing back, or a leaf the track picked up -- so
+    # it is dropped.  On a 20-shot synthetic session from chest height that
+    # took the worst mark from 25 in to 7.  Only with the lens known, and at
+    # mark_at_crossing_min_fps and up: at 30 fps the timing itself is too
+    # coarse to overrule a sighting.
+    mark_at_crossing: bool = True
     mark_at_crossing_after_s: float = 0.03
     mark_at_crossing_min_fps: float = 50.0
     # Two impacts closer together than this are one shot plus its aftermath

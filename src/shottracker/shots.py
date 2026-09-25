@@ -136,11 +136,17 @@ def _without_late_sighting(track: Track, plane: GoalPlane, cam: CameraModel, fps
     session 6 shots of 20 ended on one, 50-80 px past where the puck stopped,
     moving the mark 13-25 in.  Timing the crossing with that sighting in
     cannot catch it, since it sets the flight line's end itself; timed from
-    the sightings before it, it comes frames too late.
+    the sightings before it, it comes frames too late.  Only with the lens
+    known, since the timing is only as good as the camera: with the lens
+    guessed, a synthetic 240 fps clip timed a real impact 13 frames early.
     """
-    if len(track) < 5 or cfg.speed.shot_distance_ft is None:
+    if len(track) < 5 or cfg.speed.shot_distance_ft is None or cam.focal_source != "known":
         return track
     head = Track(track.candidates[:-1])
+    if track.end_frame - head.end_frame < 2:
+        # Seen the very next frame: the puck, still moving -- a stray is
+        # picked up after the puck has gone, not instead of it.
+        return track
     guess = plane.to_goal(head.points[-1].reshape(1, 2))[0]
     if not np.all(np.isfinite(guess)):
         return track
@@ -188,12 +194,6 @@ def shot_from_track(
                    if side_on >= cfg.shot.min_view_angle_for_timing_deg else None)
         if crossed is not None:
             speed_end = crossed[0]
-            if (cfg.shot.mark_at_crossing and fps >= cfg.shot.mark_at_crossing_min_fps
-                    and last_frame - crossed[1] > cfg.shot.mark_at_crossing_after_s * fps):
-                goal_xy = np.asarray(crossed[0], dtype=float)
-                impact_frame_f = float(crossed[1])
-                impact_px = np.array([np.interp(impact_frame_f, track.frames, track.points[:, 0]),
-                                      np.interp(impact_frame_f, track.frames, track.points[:, 1])])
     x, y = float(goal_xy[0]), float(goal_xy[1])
 
     margin = cfg.shot.miss_margin_in
