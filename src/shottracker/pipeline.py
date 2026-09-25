@@ -486,7 +486,7 @@ def analyze(
         ) / max(len(cands_by_frame), 1)
     if saturated > cfg.puck.saturated_frame_warn_frac:
         warnings.append(_busy_scene_warning(saturated, small_samples, scale, motion.needed, cfg))
-    tracks = build_tracks(cands_by_frame, goal_width_px, cfg, warnings)
+    tracks = build_tracks(cands_by_frame, goal_width_px, cfg, warnings, fps=info.fps)
     tracks = filter_by_speed(tracks, goal_width_px, info.fps, cfg)
     tracks, in_clutter = filter_by_clutter(tracks, raw_xy, goal_width_px, info.fps, cfg)
 

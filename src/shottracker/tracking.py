@@ -172,6 +172,7 @@ def build_tracks(
     goal_width_px: float,
     cfg: Config,
     notes: list[str] | None = None,
+    fps: float | None = None,
 ) -> list[Track]:
     """Grow trajectories out of scored per-frame candidates.
 
@@ -267,18 +268,74 @@ def build_tracks(
                 claimed[nxt[0]][nxt[1]] = True
                 newly.append(nxt)
 
+        if fps is not None and fps >= cfg.track.straggler_min_fps:
+            track = _without_stragglers(track, cfg)
         if not _accept(track, gw, cfg):
             track = _straight_part(track, gw, cfg)
-            keep = {id(c) for c in track.candidates} if track is not None else set()
-            # Put the detections back so a better seed can use them.
-            for f, k in newly:
-                if id(index[f][k]) not in keep:
-                    claimed[f][k] = False
+        # Put back whatever was not kept, so a better seed can use it.
+        keep = {id(c) for c in track.candidates} if track is not None else set()
+        for f, k in newly:
+            if id(index[f][k]) not in keep:
+                claimed[f][k] = False
         if track is not None:
             tracks.append(track)
 
     tracks.sort(key=lambda t: t.start_frame)
     return tracks
+
+
+def _without_stragglers(track: Track, cfg: Config) -> Track:
+    """Drop a lone detection or two cut off from either end by a gap.
+
+    Bridging a gap of a couple of frames keeps a track whole when the puck
+    blinks out mid-flight.  At the ends it can do harm.  Before the release,
+    the thing picked up across the gap is as likely a puck lying in the pile
+    as the one being shot, so a stray start is always dropped.  After the
+    impact, the first thing near where the puck *would* have gone -- the
+    netting springing back, a bounce -- is taken as the puck and the mark is
+    read from it: on a real 60 fps shot one such point moved the mark 17
+    inches.  But a puck hidden behind a post for two frames reappears on its
+    line at the impact, and that point is the most valuable one there is.  So
+    a stray end is dropped only when it is off the line the track was on.
+
+    Not at 30 fps, where a flight is a handful of frames and the puck is
+    routinely missed for two of them: there the end detections are real far
+    more often than not, and dropping them cost more than it saved.
+    """
+    tcfg = cfg.track
+    cs = list(track.candidates)
+    gap, run = tcfg.straggler_gap_frames, tcfg.max_straggler_run
+
+    def off_line(body: list[Candidate], tail: list[Candidate]) -> bool:
+        ref = body[-5:]
+        d = np.array([ref[-1].x - ref[0].x, ref[-1].y - ref[0].y])
+        span = max(ref[-1].frame - ref[0].frame, 1)
+        norm = float(np.linalg.norm(d))
+        if norm < 1e-6:
+            return True
+        u = d / norm
+        anchor = ref[-1]
+        for c in tail:
+            v = np.array([c.x - anchor.x, c.y - anchor.y])
+            travel = norm / span * abs(c.frame - anchor.frame)
+            if abs(v[0] * u[1] - v[1] * u[0]) > max(3.0, tcfg.straggler_off_line * travel):
+                return True
+        return False
+
+    for at_end in (True, False):
+        cs.reverse()  # reversed: the end first; reversed back: the start
+        removed = 0
+        while removed < run:
+            k = next((k for k in range(1, run - removed + 1)
+                      if len(cs) - k >= tcfg.min_track_length and abs(cs[k].frame - cs[k - 1].frame) >= gap), None)
+            if k is None:
+                break
+            # cs runs from this end inward: cs[:k] is the stray piece.
+            if at_end and not off_line(list(reversed(cs[k:])), cs[:k][::-1]):
+                break
+            cs, removed = cs[k:], removed + k
+    cs.sort(key=lambda c: c.frame)
+    return track if len(cs) == len(track.candidates) else Track(cs)
 
 
 def _straight_part(track: Track, goal_width_px: float, cfg: Config) -> Track | None:

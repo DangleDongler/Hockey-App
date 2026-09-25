@@ -202,3 +202,35 @@ def test_a_track_seen_only_in_clutter_is_not_a_shot():
     assert clear_sightings(in_clear, busy, 0.5 * gw, cfg.track.clutter_max_neighbours) == 10
     kept, dropped = filter_by_clutter([in_clutter, in_clear], busy, gw, 60.0, cfg)
     assert kept == [in_clear] and dropped == 1
+
+
+# --- a stray point after the impact ------------------------------------------
+
+
+def test_a_lone_detection_after_a_gap_does_not_end_the_track():
+    # A clean flight, then -- three frames after the last sighting -- the
+    # netting springing back near where the puck would have gone.
+    cfg = Config()
+    cands = {f: [_c(f, 100.0 + 20 * f, 400.0 - 4 * f)] for f in range(0, 15)}
+    cands[17] = [_c(17, 100.0 + 20 * 17 - 6, 400.0 - 4 * 17 - 14)]
+    at_60 = max(build_tracks(cands, 200.0, cfg, fps=60.0), key=len)
+    assert at_60.end_frame == 14
+    # At 30 fps a flight is a handful of frames and gaps are normal: keep it.
+    at_30 = max(build_tracks(cands, 200.0, cfg, fps=30.0), key=len)
+    assert at_30.end_frame == 17
+
+
+def test_a_puck_in_the_pile_before_the_release_does_not_start_the_track():
+    cfg = Config()
+    cands = {0: [_c(0, 90.0, 405.0)]}
+    cands.update({f: [_c(f, 100.0 + 20 * (f - 3), 400.0 - 4 * (f - 3))] for f in range(3, 18)})
+    t = max(build_tracks(cands, 200.0, cfg, fps=60.0), key=len)
+    assert t.start_frame == 3
+
+
+def test_a_puck_reappearing_on_its_line_after_a_post_still_ends_the_track():
+    cfg = Config()
+    cands = {f: [_c(f, 100.0 + 20 * f, 400.0 - 4 * f)] for f in range(0, 15)}
+    cands[17] = [_c(17, 100.0 + 20 * 17, 400.0 - 4 * 17)]  # hidden for two frames, then at the net
+    t = max(build_tracks(cands, 200.0, cfg, fps=60.0), key=len)
+    assert t.end_frame == 17

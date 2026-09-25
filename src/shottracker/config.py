@@ -184,6 +184,16 @@ class TrackingConfig:
     """Assembling candidates into shot trajectories."""
 
     max_frame_gap: int = 3         # tolerate missed detections mid-flight
+    # ...but not at the ends: up to this many detections cut off from either
+    # end by a gap this long (in frames) are dropped.  See _without_stragglers.
+    straggler_gap_frames: int = 3
+    max_straggler_run: int = 2
+    straggler_min_fps: float = 50.0
+    # A stray end point further off the track's line than this fraction of
+    # the distance the puck would have covered in the gap is not the puck.
+    # Measured: 0.01 for a puck reappearing from behind a post, 0.24-0.45 for
+    # netting and bounces after the impact.
+    straggler_off_line: float = 0.15
     # Gating radius = base + velocity-scaled term, in units of the goal width.
     gate_base_frac: float = 0.03
     gate_vel_frac: float = 0.55
