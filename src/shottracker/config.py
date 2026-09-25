@@ -58,8 +58,11 @@ class GoalSpec:
 class NetDetectConfig:
     """Automatic goal-outline detection."""
 
-    # Frames sampled across the clip to vote on a single static outline.
-    sample_frames: int = 24
+    # Frames sampled across the clip to vote on a single static outline.  The
+    # plate is built from 48 anyway, so voting on all of them costs only the
+    # detection: on the real clips' 60 fps copies, each reading its own
+    # outline, the worst speed spread went from 25% to 14%.
+    sample_frames: int = 48
     # With the lens known, put back posts' feet hidden in grass (see
     # camera.hidden_feet).
     restore_hidden_feet: bool = True
