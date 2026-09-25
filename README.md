@@ -91,7 +91,14 @@ PYTHONPATH=src:server .venv/bin/python -m uvicorn app:app --reload
 
 The browser plays your original clip and draws the analysis over it on a
 canvas — nothing is re-encoded, so playback stays smooth and you can scrub to
-any shot by clicking its mark on the chart. With several clips, a switcher
+any shot by clicking its mark on the chart. Only the puck is drawn, never the
+shooter: the net's outline, each shot's path growing as the puck flies, and
+where it lands a dot with a label like **#3 ✓ 47 mph** (✓ on net, ✗ wide,
+"post" off the iron), shown large for a moment as it hits while the zone it
+hit lights up, then settling small; older shots fade back to their number.
+**Save video with shots** burns the same picture into a copy of the clip —
+H.264 at up to 1080 across, which any phone plays and can share — drawn on
+the server from the saved result (`src/shottracker/annotate.py`). With several clips, a switcher
 above the footage picks which one plays, and clicking a shot opens its clip.
 If the net cannot be found in one clip you are asked to mark it in that clip
 only, or to leave the clip out.
@@ -382,16 +389,17 @@ src/shottracker/    the tracker: config, geometry, camera, detection, tracking, 
   benchmark.py      grades the tracker against them
 server/app.py       upload a clip, poll a job, fetch the result
 web/                the browser app: canvas overlay on the original video, interactive shot chart
+  annotate.py       the same overlay burned into a copy of the clip, to save and share
   stabilize.py      optional motion compensation (off by default, see below)
   targets.py        scoring shots against what the player was aiming at
   container.py      reads a video file's own track timing, to catch baked-in slow motion
   session.py        several clips of one goal read as one session
   history.py        sessions over time: one line per session, and progress against earlier ones
   fullspeed.py      reads a slow-motion shot as the phone would have recorded it at 30/60 fps
-tests/              155 tests, including end-to-end accuracy against ground truth
+tests/              202 tests, including end-to-end accuracy against ground truth
 ```
 
-Run the tests with `.venv/bin/python -m pytest` (about two minutes — most of it
+Run the tests with `.venv/bin/python -m pytest` (about five minutes — most of it
 is rendering video).
 
 ## At normal speed (30 and 60 fps)

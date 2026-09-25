@@ -70,8 +70,14 @@ These matter more than anything else for accuracy:
   takes several.
 
 You get each shot's speed, where it went (marks on a picture of the net),
-whether it hit the target, and the video with the puck's path drawn on it.
+whether it hit the target, and the video with the puck's path drawn on it:
+each shot gets a label like "#3 ✓ 47 mph" where it hit (✓ on net, ✗ missed).
+Only the puck is drawn, not the shooter.
 If the app can't find the net, it asks you to tap its four corners.
+
+"Save video with shots" (under the video) makes a copy of the clip with all
+of that drawn in, which plays on any phone. On the iPhone it lands in
+Downloads (Files app); from there Share > Save Video puts it in Photos.
 
 
 5. HOW MUCH TO TRUST IT

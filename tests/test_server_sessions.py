@@ -124,3 +124,28 @@ def test_the_lens_chosen_is_kept_with_the_session(client, angled_clip):
         assert cfg.camera.focal_35mm == 14.0
     finally:
         client.delete(f"/api/jobs/{job_id}")
+
+
+def test_a_video_with_the_shots_drawn_on_can_be_saved(client, angled_clip):
+    job_id, job = _upload(client, angled_clip["path"])
+    try:
+        assert job["status"] == "done", job.get("error")
+        assert client.get(f"/api/jobs/{job_id}/marked").json()["status"] == "none"
+        assert client.get(f"/api/jobs/{job_id}/marked.mp4").status_code == 404
+
+        res = client.post(f"/api/jobs/{job_id}/marked", data={"clip": "0"})
+        assert res.status_code == 202, res.text
+        state = client.get(f"/api/jobs/{job_id}/marked").json()
+        assert state["status"] == "done", state
+        assert "path" not in state   # where it lives on the server is not the page's business
+
+        video = client.get(f"/api/jobs/{job_id}/marked.mp4")
+        assert video.status_code == 200
+        assert video.headers["content-type"] == "video/mp4"
+        assert "angled-shots.mp4" in video.headers["content-disposition"]
+        assert len(video.content) > 10_000
+
+        assert client.post(f"/api/jobs/{job_id}/marked", data={"clip": "1"}).status_code == 404
+    finally:
+        client.delete(f"/api/jobs/{job_id}")
+    assert client.get(f"/api/jobs/{job_id}/marked").status_code == 404

@@ -157,7 +157,11 @@
           <video id="video" controls playsinline></video>
           <canvas id="overlay"></canvas>
         </div>
-        <label class="toggle"><input type="checkbox" id="show-zones" checked> Show target zones</label>
+        <div class="footage-actions">
+          <label class="toggle"><input type="checkbox" id="show-zones" checked> Show target zones</label>
+          <button type="button" class="secondary" id="save-marked">Save video with shots</button>
+        </div>
+        <p class="hint hidden" id="marked-status" role="status"></p>
         <p class="hint" id="video-hint"></p>
         <p class="hint hidden" id="camera-check"></p>
       </div>

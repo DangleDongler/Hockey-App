@@ -547,8 +547,8 @@ def revisits(track: Track, raw_xy: dict[int, np.ndarray], radius_px: float, wind
         for df in range(gap, window + 1):
             for f in (c.frame - df, c.frame + df):
                 pts = raw_xy.get(f)
-                if pts is not None and len(pts) and bool((np.hypot(pts[:, 0] - c.x, pts[:, 1] - c.y) < radius_px).any()):
-                    total += 1
+                if pts is not None and len(pts):
+                    total += bool((np.hypot(pts[:, 0] - c.x, pts[:, 1] - c.y) < radius_px).any())
     return total / max(len(track) * 2 * (window - gap + 1), 1)
 
 

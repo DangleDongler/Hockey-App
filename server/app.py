@@ -185,6 +185,7 @@ def _publish(job: Job) -> None:
     for clip_dict, i in zip(job.result["clips"], kept):
         clip_dict["upload_index"] = i
     job.chart_svg = shot_chart_svg(job.session)
+    _forget_marked(job.id)   # drawn from the old results
     _persist(job)
 
 
@@ -476,12 +477,92 @@ def get_video(job_id: str, clip: int = 0):
     return FileResponse(path)
 
 
+# Videos with the shots drawn on, keyed by (job, clip); rendered on request.
+MARKED: dict[tuple[str, int], dict[str, Any]] = {}
+MARKED_LOCK = threading.Lock()
+
+
+def _forget_marked(job_id: str) -> None:
+    with MARKED_LOCK:
+        for key in [k for k in MARKED if k[0] == job_id]:
+            MARKED.pop(key)
+
+
+def _marked_state(job_id: str, clip: int) -> dict[str, Any]:
+    with MARKED_LOCK:
+        st = dict(MARKED.get((job_id, clip)) or {"status": "none"})
+    st.pop("path", None)
+    return st
+
+
+def _render_marked(key: tuple[str, int], video_path: str, clip_dict: dict, out: str,
+                   numbers: dict[int, int]) -> None:
+    from shottracker.annotate import render
+
+    def progress(f: float) -> None:
+        with MARKED_LOCK:
+            if key in MARKED:
+                MARKED[key]["progress"] = round(f, 3)
+
+    try:
+        render(video_path, clip_dict, out, numbers, progress=progress)
+        state = {"status": "done", "progress": 1.0, "path": out}
+    except Exception as exc:  # noqa: BLE001 - reported to the page, which offers to try again
+        state = {"status": "error", "error": f"could not draw the video: {exc}"}
+    with MARKED_LOCK:
+        if key in MARKED:   # not forgotten meanwhile (session deleted or re-read)
+            MARKED[key] = state
+
+
+@app.post("/api/jobs/{job_id}/marked")
+def make_marked(job_id: str, background: BackgroundTasks, clip: int = Form(0)):
+    """Start drawing a clip's shots onto a copy of it (see shottracker.annotate)."""
+    job = _job_or_404(job_id)
+    clips = (job.result or {}).get("clips") or []
+    if not 0 <= clip < len(clips):
+        raise HTTPException(404, "no such clip in this session")
+    clip_dict = clips[clip]
+    upload = _clip_or_404(job, clip_dict.get("upload_index", clip))
+    if not Path(upload.video_path).exists():
+        raise HTTPException(404, "the clip is no longer on disk")
+    key = (job_id, clip)
+    with MARKED_LOCK:
+        if MARKED.get(key, {}).get("status") == "running":
+            return JSONResponse(_marked_state(job_id, clip), status_code=202)
+        MARKED[key] = {"status": "running", "progress": 0.0}
+    # Numbered as the session numbers them, across all its clips.
+    numbers = {s["clip_shot"]: s["index"] + 1 for s in job.result.get("shots", []) if s.get("clip", 0) == clip}
+    out = str(Path(upload.video_path).with_name(f"{Path(upload.video_path).stem}.marked.mp4"))
+    background.add_task(_render_marked, key, upload.video_path, clip_dict, out, numbers)
+    return JSONResponse(_marked_state(job_id, clip), status_code=202)
+
+
+@app.get("/api/jobs/{job_id}/marked")
+def marked_status(job_id: str, clip: int = 0):
+    _job_or_404(job_id)
+    return _marked_state(job_id, clip)
+
+
+@app.get("/api/jobs/{job_id}/marked.mp4")
+def marked_video(job_id: str, clip: int = 0):
+    job = _job_or_404(job_id)
+    with MARKED_LOCK:
+        state = MARKED.get((job_id, clip)) or {}
+    path = state.get("path")
+    if state.get("status") != "done" or not path or not Path(path).exists():
+        raise HTTPException(404, "the video with the shots drawn on has not been made yet")
+    clips = (job.result or {}).get("clips") or []
+    name = Path(clips[clip].get("name", "clip") if clip < len(clips) else "clip").stem
+    return FileResponse(path, media_type="video/mp4", filename=f"{name}-shots.mp4")
+
+
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str):
     job = _job_or_404(job_id)
     shutil.rmtree(Path(job.video_path).parent, ignore_errors=True)
     with JOBS_LOCK:
         JOBS.pop(job_id, None)
+    _forget_marked(job_id)
     return {"deleted": job.id}
 
 

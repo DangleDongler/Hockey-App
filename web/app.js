@@ -176,6 +176,7 @@ function render(result) {
   $("mark-panel").classList.add("hidden");
   $("history").classList.add("hidden");
   $("results").classList.remove("hidden");
+  $("marked-status").classList.add("hidden");
 
   renderStats(result);
   renderTargeting(result);
@@ -206,6 +207,7 @@ function loadClipVideo(then) {
 function selectClip(i, then) {
   if (i === state.clip) return then?.();
   state.clip = i;
+  $("marked-status").classList.add("hidden");
   renderClipTabs();
   renderStats(state.result);
   loadClipVideo(then);
@@ -885,36 +887,41 @@ function drawOverlay() {
 
     const fps = r.video.playback_fps || r.video.fps || 30;
     const frame = Math.round((video.currentTime || 0) * fps);
+    const u = screenPx(canvas);
 
-    if (r.net?.quad) drawNet(ctx, r, $("show-zones").checked);
+    if (r.net?.quad) drawNet(ctx, r, $("show-zones").checked, u);
     for (const t of r.targeting?.targets ?? []) {
       if (!t.image_outline) continue;
-      ctx.setLineDash([6, 5]);
-      ctx.lineWidth = 2;
+      ctx.setLineDash([6 * u, 5 * u]);
+      ctx.lineWidth = 2 * u;
       ctx.strokeStyle = "rgba(96,165,250,0.9)";
       poly(ctx, t.image_outline);
       ctx.setLineDash([]);
     }
-    drawTrails(ctx, r, frame);
-    drawImpacts(ctx, r, frame);
+    drawShots(ctx, r, frame, fps, u);
   }
   requestAnimationFrame(drawOverlay);
 }
 
-function drawNet(ctx, r, zones) {
+// The canvas is drawn at the video's own resolution -- 2160 px across for 4K
+// -- so sizes are given in screen pixels and scaled by this.
+function screenPx(canvas) {
+  const shown = canvas.getBoundingClientRect().width;
+  return shown ? canvas.width / shown : 1;
+}
+
+function drawNet(ctx, r, zones, u) {
   const outer = r.goal?.outer_outline ?? r.net.quad;
   const mouth = r.goal?.mouth_outline ?? r.goal?.mouth_quad;
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 2 * u;
+  ctx.strokeStyle = "rgba(56,189,248,0.9)";
   poly(ctx, outer);
   if (mouth) {
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "rgba(56,189,248,0.55)";
+    ctx.lineWidth = 1 * u;
+    ctx.strokeStyle = "rgba(56,189,248,0.5)";
     poly(ctx, mouth);
     if (zones && r.goal?.mouth_quad) {
-      // The zone grid is a flat 3x3 over the opening, so it is still drawn
-      // from the quad's corners rather than the bent outline.
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 * u;
       ctx.strokeStyle = "rgba(56,189,248,0.3)";
       const [tl, tr, br, bl] = r.goal.mouth_quad;
       for (const f of [1 / 3, 2 / 3]) {
@@ -923,6 +930,15 @@ function drawNet(ctx, r, zones) {
       }
     }
   }
+  // Corner dots, and a tag over the crossbar.
+  for (const [x, y] of r.net.quad) {
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5 * u, 0, Math.PI * 2);
+    ctx.fillStyle = "#ef4444";
+    ctx.fill();
+  }
+  const [tl, tr] = r.net.quad;
+  pill(ctx, "NET", (tl[0] + tr[0]) / 2, Math.min(tl[1], tr[1]) - 12 * u, 11 * u, "#ef4444", "#ffffff", "center");
 }
 
 const lerp = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
@@ -934,51 +950,169 @@ function poly(ctx, pts) {
   ctx.stroke();
 }
 
-function drawTrails(ctx, r, frame) {
-  const TRAIL = 30;
-  for (const track of r.tracks ?? []) {
-    const pts = track.points.filter((_, i) => {
-      const f = track.frames[i];
-      return f <= frame && f > frame - TRAIL;
-    });
-    for (let i = 1; i < pts.length; i++) {
-      const age = (pts.length - i) / pts.length;
-      ctx.strokeStyle = `rgba(255,255,255,${(1 - age * 0.8).toFixed(2)})`;
-      ctx.lineWidth = 3;
-      line(ctx, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
-    }
-    const head = track.points[track.frames.indexOf(frame)];
-    if (head) {
-      ctx.beginPath();
-      ctx.arc(head[0], head[1], 8, 0, Math.PI * 2);
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-  }
+function polyline(ctx, pts) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
 }
 
-function drawImpacts(ctx, r, frame) {
-  for (const shot of r.shots) {
-    if (frame < shot.impact_frame) continue;
+// A rounded label.  ``align`` is where (x, y) sits on it: its "left" edge,
+// its "right" edge or its "center"; it is kept inside the picture.
+function pill(ctx, text, x, y, size, fill, ink, align = "left") {
+  ctx.font = `700 ${size}px system-ui, sans-serif`;
+  const w = ctx.measureText(text).width + size * 0.9;
+  const h = size * 1.55;
+  let x0 = align === "center" ? x - w / 2 : align === "right" ? x - w : x;
+  x0 = Math.max(2, Math.min(x0, ctx.canvas.width - w - 2));
+  y = Math.max(h / 2 + 2, Math.min(y, ctx.canvas.height - h / 2 - 2));
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x0, y - h / 2, w, h, h / 2);
+  else ctx.rect(x0, y - h / 2, w, h);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.fillStyle = ink;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x0 + w / 2, y + size * 0.04);
+  ctx.textBaseline = "alphabetic";
+}
+
+const OUTCOME_MARK = { on_net: "✓", post: "post", miss: "✗" };
+const FLASH_S = 0.6;      // the zone it hit lights up this long
+const CALLOUT_S = 1.5;    // and the newest shot's label is shown large this long
+
+// Where on the picture a 3x3 zone of the mouth is: top_left .. low_right.
+const ZONE_CELL = {
+  top_left: [0, 0], top_mid: [0, 1], top_right: [0, 2],
+  mid_left: [1, 0], mid_mid: [1, 1], mid_right: [1, 2],
+  low_left: [2, 0], five_hole: [2, 1], low_right: [2, 2],
+};
+
+function zoneCell(quad, key) {
+  const cell = ZONE_CELL[key];
+  if (!cell) return null;
+  const [row, col] = cell;
+  const [tl, tr, br, bl] = quad;
+  const at = (fx, fy) => lerp(lerp(tl, tr, fx), lerp(bl, br, fx), fy);
+  return [at(col / 3, row / 3), at((col + 1) / 3, row / 3), at((col + 1) / 3, (row + 1) / 3), at(col / 3, (row + 1) / 3)];
+}
+
+// Every shot leaves its path on the picture, from where it was first seen to
+// where it hit, with its number, result and speed; the newest is drawn
+// strongest and the ones before it fade back.
+function drawShots(ctx, r, frame, fps, u) {
+  const shots = r.shots.map((shot, i) => ({ shot, track: (r.tracks ?? []).find((t) => t.shot_index === i) }));
+  const landed = shots.filter(({ shot }) => frame >= shot.impact_frame);
+  const latest = landed.length
+    ? landed.reduce((a, b) => (b.shot.impact_frame > a.shot.impact_frame ? b : a)).shot
+    : null;
+  for (const { shot, track } of shots) {
+    const from = shot.first_tracked_frame ?? shot.impact_frame;
+    if (frame < from) continue;
+    const done = frame >= shot.impact_frame;
+    const color = done ? OUTCOME_COLOR[shot.outcome] ?? "#94a3b8" : "#ffffff";
+    const pts = track ? track.points.filter((_, k) => track.frames[k] <= frame) : [];
+    if (done) pts.push(shot.impact_image);
+    ctx.globalAlpha = !done || shot === latest ? 1 : 0.4;
+
+    // The path, over a dark edge so it shows on bright concrete too.
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = 5 * u;
+    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    polyline(ctx, pts);
+    ctx.lineWidth = 2.5 * u;
+    ctx.strokeStyle = color;
+    polyline(ctx, pts);
+
+    if (!done) {
+      const head = pts[pts.length - 1];
+      if (head) {
+        ctx.beginPath();
+        ctx.arc(head[0], head[1], 7 * u, 0, Math.PI * 2);
+        ctx.lineWidth = 2 * u;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+      }
+      continue;
+    }
+
+    const age = (frame - shot.impact_frame) / fps;
+    if (age < FLASH_S && r.goal?.mouth_quad) {
+      const cell = zoneCell(r.goal.mouth_quad, shot.zone_key);
+      if (cell) {
+        ctx.globalAlpha = 0.45 * (1 - age / FLASH_S);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        cell.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = shot === latest ? 1 : 0.4;
+      }
+    }
+
     const [x, y] = shot.impact_image;
     ctx.beginPath();
-    ctx.arc(x, y, 10, 0, Math.PI * 2);
-    ctx.fillStyle = OUTCOME_COLOR[shot.outcome] ?? "#94a3b8";
+    ctx.arc(x, y, 6 * u, 0, Math.PI * 2);
+    ctx.fillStyle = color;
     ctx.fill();
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * u;
     ctx.strokeStyle = "#0b1220";
     ctx.stroke();
 
     const n = sessionNo(state.clip, shot.index);
-    const tag = shot.speed ? `${n}  ${Math.round(shot.speed.mph)} mph` : `${n}`;
-    ctx.font = "600 18px system-ui, sans-serif";
-    ctx.textAlign = "left";
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "rgba(0,0,0,0.75)";
-    ctx.strokeText(tag, x + 16, y - 10);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(tag, x + 16, y - 10);
+    const mark = OUTCOME_MARK[shot.outcome] ?? "";
+    const mph = shot.speed ? ` ${Math.round(shot.speed.mph)} mph` : "";
+    // The newest shot says everything; older ones keep just their number, so
+    // a session's worth of marks does not bury the net in labels.
+    const newest = shot === latest;
+    const size = (newest && age < CALLOUT_S ? 20 : newest ? 13 : 10) * u;
+    const text = newest ? `#${n} ${mark}${mph}` : `#${n}`;
+    // To the right of the mark, or to its left if it would run off the picture.
+    ctx.font = `700 ${size}px system-ui, sans-serif`;
+    const fits = x + 10 * u + ctx.measureText(text).width + size <= ctx.canvas.width;
+    pill(ctx, text, fits ? x + 10 * u : x - 10 * u, y - 14 * u, size, color, "#0b1220", fits ? "left" : "right");
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ------------------------------------------- the video with shots drawn on */
+
+// The same marks, burned into a copy of the clip on the server (H.264, which
+// any phone plays), to keep or send.
+$("save-marked").addEventListener("click", saveMarked);
+
+async function saveMarked() {
+  const btn = $("save-marked");
+  const status = $("marked-status");
+  const clip = state.clip;
+  btn.disabled = true;
+  status.classList.remove("hidden");
+  status.textContent = "Drawing the shots onto the video\u2026";
+  try {
+    const form = new FormData();
+    form.append("clip", String(clip));
+    let res = await fetch(`/api/jobs/${state.jobId}/marked`, { method: "POST", body: form });
+    let st = await res.json();
+    while (res.ok && st.status === "running") {
+      status.textContent = `Drawing the shots onto the video\u2026 ${Math.round((st.progress ?? 0) * 100)}%`;
+      await new Promise((r) => setTimeout(r, 1000));
+      res = await fetch(`/api/jobs/${state.jobId}/marked?clip=${clip}`);
+      st = await res.json();
+    }
+    if (!res.ok || st.status !== "done") throw new Error(st.error || st.detail || "it could not be made");
+    const url = `/api/jobs/${state.jobId}/marked.mp4?clip=${clip}`;
+    status.innerHTML = `Ready: <a href="${url}" download>download the video with the shots drawn on</a>.`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    status.textContent = `The video with the shots drawn on could not be made: ${e.message}`;
+  } finally {
+    btn.disabled = false;
   }
 }
 
