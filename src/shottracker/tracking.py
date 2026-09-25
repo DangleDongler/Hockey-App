@@ -95,11 +95,15 @@ class Track:
         p = self.points
         if len(p) < 3:
             return 0.0
-        centred = p - p.mean(axis=0)
-        # Total least squares: the smallest singular value is the RMS spread
-        # perpendicular to the best-fit line.
-        sv = np.linalg.svd(centred, compute_uv=False)
-        return float(sv[-1] / np.sqrt(len(p)))
+        # Total least squares: the smaller eigenvalue of the points' 2x2
+        # covariance is the mean squared spread perpendicular to the best-fit
+        # line.  In closed form, because this runs hundreds of thousands of
+        # times on a long clip.
+        d = p - p.mean(axis=0)
+        sxx, syy, sxy = float(d[:, 0] @ d[:, 0]), float(d[:, 1] @ d[:, 1]), float(d[:, 0] @ d[:, 1])
+        half = 0.5 * (sxx + syy)
+        low = half - np.sqrt(max(0.25 * (sxx - syy) ** 2 + sxy * sxy, 0.0))
+        return float(np.sqrt(max(low, 0.0) / len(p)))
 
     def fit_poly(self, deg: int | None = None, window: int | None = None) -> tuple[np.ndarray, np.ndarray, float]:
         """Polynomial fit of x(frame) and y(frame). Returns (cx, cy, t0).
@@ -338,6 +342,60 @@ def _without_stragglers(track: Track, cfg: Config) -> Track:
     return track if len(cs) == len(track.candidates) else Track(cs)
 
 
+def until_impact(track: Track, fps: float, cfg: Config, near_goal=None) -> Track:
+    """End the track where the puck stopped flying.
+
+    In flight a puck's path on screen is smooth: it bends only as gravity
+    and perspective bend it, and its speed on screen changes slowly as it
+    nears or leaves the camera.  At the net that ends abruptly -- it drops
+    into the mesh, bounces off the bar, rides the netting back -- and a
+    detector sensitive enough to follow the flight follows that too.  On real
+    60 fps copies those few extra points moved the mark by 12 to 28 inches.
+
+    Steps are compared at 60 fps spacing whatever the frame rate, so pixel
+    jitter between 240 fps frames is not mistaken for a turn.  A break only
+    counts where ``near_goal(point)`` says the puck was at the net: a wobble
+    mid-flight, far from it, once cut a real track in half.
+    """
+    if fps < cfg.track.straggler_min_fps:
+        return track
+    tcfg = cfg.track
+    cs = track.candidates
+    stride = max(1, int(round(fps / 60.0)))
+    # Thin to one detection per stride, keeping the last.
+    picked = [len(cs) - 1]
+    for i in range(len(cs) - 2, -1, -1):
+        if cs[picked[-1]].frame - cs[i].frame >= stride:
+            picked.append(i)
+    picked.reverse()
+    if len(picked) < 6:
+        return track
+    pts = np.array([[cs[i].x, cs[i].y] for i in picked])
+    fr = np.array([cs[i].frame for i in picked], dtype=float)
+    vel = np.diff(pts, axis=0) / np.diff(fr)[:, None]
+    speed = np.linalg.norm(vel, axis=1)
+    for k in range(max(3, len(vel) // 2), len(vel)):
+        ref = vel[k - 2:k].mean(axis=0)
+        ref_speed = float(np.linalg.norm(ref))
+        if ref_speed < tcfg.impact_min_step_px or speed[k] < 1e-6:
+            continue
+        cos = float(ref @ vel[k]) / (ref_speed * speed[k])
+        turned = cos < np.cos(np.radians(tcfg.impact_turn_deg))
+        ratio = speed[k] / ref_speed
+        # Slowing down gently is not a sign: a puck flying away from the
+        # camera slows on screen all the way, by a quarter across a missed
+        # frame.  Stopping short is: the mesh takes most of its speed at once.
+        stopped = ratio < tcfg.impact_stop_ratio
+        if turned or stopped or ratio > tcfg.impact_speed_jump:
+            cut = picked[k]  # the last point before the break
+            if near_goal is not None and not near_goal(pts[k]):
+                continue
+            if cut + 1 >= tcfg.min_track_length:
+                return Track(list(cs[: cut + 1]))
+            break
+    return track
+
+
 def _straight_part(track: Track, goal_width_px: float, cfg: Config) -> Track | None:
     """The clean flight inside a track that bends at either end.
 
@@ -345,17 +403,21 @@ def _straight_part(track: Track, goal_width_px: float, cfg: Config) -> Track | N
     shot, along the ice as the blade drags it; after the impact, down the
     netting.  Those bends make the whole track fail the straight-line test,
     and the flight -- the part that matters -- would be thrown away with
-    them.  So detections are trimmed one at a time from whichever end is
-    further off the line, until what is left passes or is too short.
+    them.  So the longest unbroken stretch that passes is kept, the one
+    nearest the net when two are as long.  Peeling one point at a time off
+    whichever end looked worse was tried first; on a real shot bent at both
+    ends it peeled the wrong end and kept a stretch that stopped halfway to
+    the net.  Less than half the track is not the same flight, so nothing
+    shorter is looked for.
     """
-    cs = list(track.candidates)
+    cs = track.candidates
+    n = len(cs)
     n_min = cfg.track.min_track_length
-    while len(cs) > n_min:
-        head, tail = Track(cs[1:]), Track(cs[:-1])
-        cs = list((head if head.path_residual_px() <= tail.path_residual_px() else tail).candidates)
-        t = Track(cs)
-        if _accept(t, goal_width_px, cfg):
-            return t
+    for length in range(n - 1, max(n_min, (n + 1) // 2) - 1, -1):
+        for start in range(n - length, -1, -1):
+            t = Track(list(cs[start : start + length]))
+            if _accept(t, goal_width_px, cfg):
+                return t
     return None
 
 

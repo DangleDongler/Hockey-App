@@ -20,10 +20,11 @@ from .config import PUCK_DIAMETER_IN, CameraConfig, Config
 from .container import Lens, detect_slow_motion, read_lens, read_timing
 from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
 from .net_detect import NetDetection, detect_net
-from .puck_detect import Candidate, PuckDetector, build_background, demote_recurring
+from .puck_detect import Candidate, PuckDetector, build_background_and_noise, demote_recurring
 from .shots import Shot, approaches_goal, dedupe_shots, shot_from_track
 from .stabilize import CameraMotion, estimate_motion, interpolate, measure
-from .tracking import Track, build_tracks, filter_by_clutter, filter_by_speed
+from .tracking import Track, build_tracks, filter_by_clutter, filter_by_speed, until_impact
+from .video import iter_frames, keyframes
 
 
 @dataclass
@@ -188,10 +189,10 @@ def _busy_scene_warning(
     drift = None
     if not already_aligned and len(samples) >= 2:
         s2 = min(1.0, 320.0 / float(samples[0].shape[1]))
-        grays = {
-            i: cv2.cvtColor(cv2.resize(f, None, fx=s2, fy=s2, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
-            for i, f in enumerate(samples)
-        }
+        grays = {}
+        for i, f in enumerate(samples):
+            small = cv2.resize(f, None, fx=s2, fy=s2, interpolation=cv2.INTER_AREA)
+            grays[i] = small if small.ndim == 2 else cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         ref = grays[len(grays) // 2]
         est = estimate_motion(ref, grays, scale=scale * s2)
         weak = sum(1 for _, resp in est.values() if resp < 0.12)
@@ -211,6 +212,52 @@ def _busy_scene_warning(
     else:
         how = f"The camera moved during the clip, by up to {drift[0]:.0f} px"
     return head + how + "; prop the phone against something steady rather than holding it."
+
+
+def _too_slow_for_a_shot(shot: Shot, cfg: Config) -> bool:
+    """Whether a timed flight was too slow to have been a shot.
+
+    Only the timed flight (a shooting distance was given) is trusted for
+    this: the fallback estimators read real shots at a third of their speed
+    on the real clips, and must not throw them away.
+    """
+    sp = shot.speed
+    return bool(sp is not None and sp.method == "time_of_flight" and sp.mph < cfg.shot.min_shot_mph)
+
+
+def _near_goal(plane: GoalPlane, goal_width_px: float, cfg: Config):
+    """A test for whether an image point is at the net, give or take."""
+    outline = plane.to_image(outer_outline(plane.goal)).astype(np.float32).reshape(-1, 1, 2)
+    reach = cfg.track.impact_near_goal_frac * goal_width_px
+
+    def near(p) -> bool:
+        return cv2.pointPolygonTest(outline, (float(p[0]), float(p[1])), True) >= -reach
+
+    return near
+
+
+def _distance_check(shots: list[Shot], cfg: Config) -> str | None:
+    """Say so when the flights start further out than the distance given.
+
+    Only a flight seen from the stick onward can say where it started; one
+    first seen mid-flight says nothing, so this only ever reports a distance
+    that is *longer* than the one given, and only when most such shots agree.
+    """
+    given = cfg.speed.shot_distance_ft
+    if not given or not shots:
+        return None
+    implied = [s.speed.implied_distance_ft for s in shots if s.speed and s.speed.implied_distance_ft]
+    if not implied or len(implied) * 2 < len(shots):
+        return None
+    median = float(np.median(implied))
+    if median < given * (1.0 + cfg.speed.distance_warn_frac):
+        return None
+    return (
+        f"the puck seems to leave the stick about {median:.0f} ft from the goal line "
+        f"({len(implied)} of {len(shots)} shot(s)), not the {given:g} ft given. If the shooting spot was "
+        f"further back, run it again with that distance: every speed scales with it, and this one would "
+        f"read about {100 * (median / given - 1):.0f}% faster. From a camera far off or low, the estimate is rough."
+    )
 
 
 def decoded_frame_rate(path: str, frames: int = 40) -> float | None:
@@ -306,37 +353,73 @@ def known_focal_px(info: VideoInfo, cfg: Config) -> tuple[float, float, str] | N
 SEQUENTIAL_SAMPLE_STRIDE = 48
 
 
-def sample_frames(path: str, n: int, total: int) -> list[np.ndarray]:
-    """Evenly spaced frames: read straight through a short clip, seek in a long one."""
-    cap = cv2.VideoCapture(path)
+def sample_frames(path: str, n: int, total: int, exact: bool = True,
+                  size: tuple[int, int] | None = None, gray: bool = False,
+                  fast: bool = False) -> list[np.ndarray]:
+    """Evenly spaced frames: read straight through a short clip, jump through a long one.
+
+    ``exact`` asks for frames at exactly evenly spaced indices.  Without it, a
+    long clip is sampled at its keyframes, which decode on their own and are
+    about a second apart -- seconds instead of minutes on a long 4K clip.
+
+    ``fast`` reads a short clip with the fast reader (video.iter_frames), so
+    the frames are exactly what the per-frame pass sees; the background plate
+    must be.  Otherwise a short clip is read with OpenCV itself: the frames
+    the net is found on decide where the camera is worked out to be, and on
+    a small far net even the fast reader's HDR colour mapping (a few grey
+    levels off OpenCV's) moved the outline enough to shift a speed by 7%.
+    ``size`` and ``gray`` are as for iter_frames.
+    """
+    def shaped(f: np.ndarray) -> np.ndarray:
+        if size is not None and (f.shape[1], f.shape[0]) != tuple(size):
+            f = cv2.resize(f, tuple(size), interpolation=cv2.INTER_AREA)
+        if gray and f.ndim == 3:
+            f = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        return f
+
     frames: list[np.ndarray] = []
-    try:
-        if total <= 0:
-            while len(frames) < n:
-                ok, f = cap.read()
-                if not ok:
+    if total <= 0:
+        for f in iter_frames(path, size if gray else None, gray):
+            frames.append(shaped(f))
+            if len(frames) >= n:
+                break
+        return frames
+    wanted = np.linspace(0, max(total - 1, 0), min(n, max(total, 1))).astype(int)
+    keep = set(int(i) for i in wanted)
+    last = int(wanted[-1])
+    if total / max(len(wanted), 1) <= SEQUENTIAL_SAMPLE_STRIDE:
+        if gray or fast:
+            # Grey frames come scaled from the decoder; colour ones are read
+            # full size and shrunk afterwards, exactly as the per-frame pass.
+            for idx, f in enumerate(iter_frames(path, size if gray else None, gray)):
+                if idx in keep:
+                    frames.append(shaped(f))
+                if idx >= last:
                     break
-                frames.append(f)
             return frames
-        wanted = np.linspace(0, max(total - 1, 0), min(n, max(total, 1))).astype(int)
-        if total / max(len(wanted), 1) <= SEQUENTIAL_SAMPLE_STRIDE:
-            keep = set(int(i) for i in wanted)
-            last = int(wanted[-1])
+        cap = cv2.VideoCapture(path)
+        try:
             idx = 0
-            while idx <= last:
-                if not cap.grab():
-                    break
+            while idx <= last and cap.grab():
                 if idx in keep:
                     ok, f = cap.retrieve()
                     if ok:
-                        frames.append(f)
+                        frames.append(shaped(f))
                 idx += 1
-            return frames
+        finally:
+            cap.release()
+        return frames
+    if not exact:
+        got = keyframes(path, len(wanted), size if gray else None, gray)
+        if got:
+            return [shaped(f) for f in got]
+    cap = cv2.VideoCapture(path)
+    try:
         for idx in wanted:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
             ok, f = cap.read()
             if ok:
-                frames.append(f)
+                frames.append(shaped(f))
     finally:
         cap.release()
     return frames
@@ -366,7 +449,7 @@ def analyze(
     # --- pass 1: goal outline and background plate ---------------------
     report("sampling", 0.02)
     n_sample = max(cfg.net.sample_frames, cfg.puck.bg_sample_frames)
-    samples = sample_frames(path, n_sample, info.frame_count)
+    samples = sample_frames(path, n_sample, info.frame_count, exact=cfg.puck.stabilize)
     if not samples:
         raise RuntimeError(f"no frames could be read from {path}")
 
@@ -432,18 +515,29 @@ def analyze(
     # The plate must be built from frames that agree on where the scene is.
     n_plate = min(cfg.puck.bg_sample_frames, max(info.frame_count, 1))
     bg_indices = np.linspace(0, max(info.frame_count - 1, 0), n_plate).astype(int)
-    small_samples = []
-    for f, idx in zip(samples[: cfg.puck.bg_sample_frames], bg_indices):
-        img = motion.compensate(f, int(idx)) if motion.needed else f
-        small_samples.append(
-            cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else img
-        )
-    background = build_background(small_samples) if cfg.puck.method == "median" else None
+    work_size = (int(round(info.width * scale)), int(round(info.height * scale))) if scale < 1.0 else None
+    # With grey_decode the detector works on grey frames decoded straight at
+    # working size (see the config).  Either way the plate is read exactly the
+    # way the per-frame pass below reads, so the two never differ by how they
+    # were decoded.
+    grey = cfg.puck.grey_decode and cfg.puck.method == "median" and not motion.needed
+    if not motion.needed:
+        small_samples = sample_frames(path, n_plate, info.frame_count, exact=cfg.puck.stabilize,
+                                      size=work_size, gray=grey, fast=True)
+    else:
+        small_samples = []
+        for f, idx in zip(samples[: cfg.puck.bg_sample_frames], bg_indices):
+            img = motion.compensate(f, int(idx)) if motion.needed else f
+            small_samples.append(
+                cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else img
+            )
+    background, noise = (build_background_and_noise(small_samples) if cfg.puck.method == "median"
+                         else (None, None))
 
     goal_width_px = float(np.linalg.norm(net.quad[1] - net.quad[0]))
     # How big a puck looks at the goal plane, in working-resolution pixels.
     puck_px_small = plane.px_per_inch_at(0.0, 24.0) * PUCK_DIAMETER_IN * scale
-    detector = PuckDetector(cfg, background, puck_px=puck_px_small, scale=scale)
+    detector = PuckDetector(cfg, background, puck_px=puck_px_small, scale=scale, noise=noise)
 
     # --- pass 2: puck candidates, every frame --------------------------
     report("tracking the puck", 0.3)
@@ -451,25 +545,20 @@ def analyze(
     # Keep everything for now when clutter is to be sorted out over the
     # whole clip; the per-frame cap is applied after that.
     raw_cap = cfg.puck.raw_candidates_per_frame if cfg.puck.demote_recurring else None
-    cap = cv2.VideoCapture(path)
     idx = 0
-    try:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
+    for frame in iter_frames(path, work_size if grey else None, gray=grey):
+        small = frame
+        if not grey:
             aligned = motion.compensate(frame, idx) if motion.needed else frame
             small = aligned
             if scale < 1.0:
                 small = cv2.resize(aligned, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-            found = detector.detect(small, idx, limit=raw_cap)
-            if found:
-                cands_by_frame[idx] = found
-            idx += 1
-            if progress and info.frame_count and idx % 60 == 0:
-                report("tracking the puck", 0.3 + 0.5 * idx / max(info.frame_count, 1))
-    finally:
-        cap.release()
+        found = detector.detect(small, idx, limit=raw_cap)
+        if found:
+            cands_by_frame[idx] = found
+        idx += 1
+        if progress and info.frame_count and idx % 60 == 0:
+            report("tracking the puck", 0.3 + 0.5 * idx / max(info.frame_count, 1))
     if idx and idx != info.frame_count:
         info.frame_count = idx
 
@@ -489,16 +578,22 @@ def analyze(
     tracks = build_tracks(cands_by_frame, goal_width_px, cfg, warnings, fps=info.fps)
     tracks = filter_by_speed(tracks, goal_width_px, info.fps, cfg)
     tracks, in_clutter = filter_by_clutter(tracks, raw_xy, goal_width_px, info.fps, cfg)
+    near = _near_goal(plane, goal_width_px, cfg)
+    tracks = [until_impact(t, info.fps, cfg, near) for t in tracks]
 
     zones = build_zones(cfg.goal)
     shots: list[Shot] = []
     track_of: dict[int, Track] = {}
     started_at_goal = 0
+    slow = 0
     for t in tracks:
         if not approaches_goal(t, plane, cfg):
             started_at_goal += 1
             continue
         s = shot_from_track(len(shots), t, plane, cam, info.fps, cfg, zones)
+        if s is not None and _too_slow_for_a_shot(s, cfg):
+            slow += 1
+            continue
         if s is not None:
             shots.append(s)
             track_of[id(s)] = t
@@ -507,6 +602,11 @@ def analyze(
     # drawn for something that was merged away.
     kept_tracks = [track_of[id(s)] for s in shots]
 
+    if slow:
+        warnings.append(
+            f"not counted as shots: {slow} slow mover(s), under {cfg.shot.min_shot_mph:.0f} mph by the timed "
+            "flight -- skating, stickhandling, a puck rolling in. A shot at a net is faster than that."
+        )
     if in_clutter:
         warnings.append(
             f"not counted as shots: {in_clutter} short line(s) of flickers in busy background -- leaves "
@@ -527,6 +627,10 @@ def analyze(
             )
         else:
             warnings.append("no puck trajectories were found in this clip")
+
+    note = _distance_check(shots, cfg)
+    if note:
+        warnings.append(note)
 
     if cfg.speed.shot_distance_ft is None and shots:
         warnings.append(

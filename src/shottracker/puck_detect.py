@@ -39,24 +39,46 @@ class Candidate:
 
 def build_background(frames: list[np.ndarray]) -> np.ndarray:
     """Per-pixel median plate. Returns a grayscale image."""
+    return build_background_and_noise(frames)[0]
+
+
+def build_background_and_noise(frames: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """Per-pixel median plate, and how much each pixel normally strays from it.
+
+    The spread is the median absolute deviation over the same frames, scaled
+    to a standard deviation.  Gravel and concrete just in front of the lens
+    shimmer by a few grey levels frame to frame from sensor noise alone; with
+    one threshold for the whole picture that shimmer broke into ~1,600
+    puck-sized specks a frame on a real 4K clip, and the puck was cut from
+    the list before anything could tell it apart.
+    """
     if not frames:
         raise ValueError("no frames to build a background from")
-    grays = np.stack([cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames])
-    return np.median(grays, axis=0).astype(np.uint8)
+    grays = np.stack([f if f.ndim == 2 else cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames])
+    plate = np.median(grays, axis=0)
+    spread = 1.4826 * np.median(np.abs(grays.astype(np.float32) - plate), axis=0)
+    return plate.astype(np.uint8), spread.astype(np.float32)
 
 
 class PuckDetector:
     """Per-frame candidate extraction against a fixed background plate."""
 
-    def __init__(self, cfg: Config, background: np.ndarray | None, puck_px: float, scale: float):
+    def __init__(self, cfg: Config, background: np.ndarray | None, puck_px: float, scale: float,
+                 noise: np.ndarray | None = None):
         """
         ``puck_px`` is the puck's apparent diameter on the goal plane, in
         working-resolution pixels; it sets the size bounds.  ``scale`` converts
-        working-resolution coordinates back to full resolution.
+        working-resolution coordinates back to full resolution.  ``noise`` is
+        each pixel's usual spread about the plate (see
+        build_background_and_noise); where it is large the threshold rises.
         """
         self.cfg = cfg
         self.background = background
         self.scale = scale
+        self.threshold = None
+        if background is not None and noise is not None and cfg.puck.noise_threshold_k > 0:
+            self.threshold = np.maximum(float(cfg.puck.diff_threshold),
+                                        cfg.puck.noise_threshold_k * noise).astype(np.float32)
         self.puck_px = max(puck_px, 1.5)
 
         pcfg = cfg.puck
@@ -70,14 +92,19 @@ class PuckDetector:
                 history=pcfg.mog_history, varThreshold=pcfg.mog_var_threshold, detectShadows=False
             )
 
-    def foreground(self, small_bgr: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
+    def foreground(self, small_bgr: np.ndarray, gray: np.ndarray | None = None) -> np.ndarray:
+        """Pixels that differ from the plate.  ``small_bgr`` may already be grey."""
+        if gray is None:
+            gray = small_bgr if small_bgr.ndim == 2 else cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
         if self._mog is not None:
             fg = self._mog.apply(small_bgr)
             fg = (fg > 200).astype(np.uint8) * 255
         else:
             diff = cv2.absdiff(gray, self.background)
-            fg = (diff > self.cfg.puck.diff_threshold).astype(np.uint8) * 255
+            if self.threshold is not None:
+                fg = (diff.astype(np.float32) > self.threshold).astype(np.uint8) * 255
+            else:
+                fg = (diff > self.cfg.puck.diff_threshold).astype(np.uint8) * 255
         # Close pinholes in the blur streak without merging separate objects.
         fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
         return fg
@@ -85,8 +112,8 @@ class PuckDetector:
     def detect(self, small_bgr: np.ndarray, frame_idx: int, limit: int | None = None) -> list[Candidate]:
         """Candidates in one frame, best first; at most ``limit`` (default: the configured cap)."""
         pcfg = self.cfg.puck
-        gray = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
-        fg = self.foreground(small_bgr)
+        gray = small_bgr if small_bgr.ndim == 2 else cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
+        fg = self.foreground(small_bgr, gray)
 
         num, labels, stats, centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
         out: list[Candidate] = []

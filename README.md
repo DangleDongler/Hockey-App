@@ -413,21 +413,26 @@ On four real slow-motion shots (backyard, phone lying on the ground about
 
 | | Speed vs the slow-motion reading | Mark vs the slow-motion reading |
 | --- | --- | --- |
-| 60 fps, shot 1 (just wide) | −7% to +3% | 2–6 in |
-| 60 fps, shot 2 (into the net) | 0 to −21%; 2 of 4 within 0.3% | 1–17 in; 2 of 4 within 1.1 in |
-| 60 fps, shot 3 (over the bar) | −9% to +19%; 2 of 4 within 0.3% | 1–16 in; 3 of 4 within 5 in |
-| 60 fps, shot 4 (off the crossbar) | +1% to +11% | 1–4 in |
-| 30 fps, all four | −13% to +59% | 0.4–28 in; 6 of 32 versions read nothing |
+| 60 fps, shot 1 (just wide) | within 2% | within 2.4 in |
+| 60 fps, shot 2 (into the net) | 0 to −5% | within 2.9 in |
+| 60 fps, shot 3 (over the bar) | −9% to +12% | 0.3–8 in |
+| 60 fps, shot 4 (off the crossbar) | +1% to +24% | 2–4 in |
+| 30 fps, all four | −27% to +61% | up to 85 in; 4 of 32 versions read nothing |
+
+(Against each shot's slow-motion reading from before the second pass below,
+so that a change cannot move its own yardstick.)
 
 The copies are written losslessly: an earlier table here came from re-encoded
 copies, and the re-encoding alone blurred the small net's pipes and some
 pucks enough to change the result.
 
-The large misses at 60 fps have one cause. Seen from a phone far out and low,
-a puck that has crossed the goal line and is still travelling to the back of
-the net looks almost exactly like one still short of it, so where the track
-stops is not quite where it crossed. That is a property of the camera spot,
-not something more processing will fix: see *Where to put the phone* below.
+What is left at 60 fps comes from the camera spot, not the frame rate. The
+two shots filmed from the ground 26 ft out on the far side read within a few
+inches but swing ±10-25% on speed between copies: one or two pixels of
+difference in where the net is outlined moves the worked-out camera by feet
+at that distance. A puck that misses wide also carries on into the backstop,
+and from far out and low that looks almost exactly like a puck still short
+of the goal line. See *Where to put the phone* below.
 
 30 fps is not good enough to be trusted, and no amount of processing will make
 it so: a 40 mph shot moves about two feet between frames, and from one camera
@@ -497,9 +502,9 @@ flight frame by frame:
 
 | Clip | Hand-timed (release → net, 18.75 ft) | The app |
 | --- | --- | --- |
-| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 47.0 mph |
-| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 46.9 mph |
-| First slow-motion clip (below) | 39 mph | 38.2 mph |
+| 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 47.2 mph |
+| 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 48.4 mph |
+| First slow-motion clip (below) | 39 mph | 37.4 mph |
 
 What each clip broke, and what changed:
 
@@ -539,6 +544,47 @@ release sits 12% and 23% behind where an 18.75 ft shot would start it, as if
 they were taken from 21–23 ft. Either the shooter stood further back, or
 something in that setup differs; until that is known their speeds (60 and
 56 mph) are not trusted.
+
+### A second pass: long clips, the stick, and the net
+
+Going back over the same clips, and the 2.6-minute session, turned up more:
+
+- **4K HDR frames held ~1,600 moving specks each.** Gravel and concrete just
+  in front of the lens shimmer by a few grey levels from sensor noise, and
+  one threshold for the whole picture turned that into puck-sized specks by
+  the thousand; the puck was cut from the list before anything could tell it
+  apart, and whether a shot was found at all came down to rounding. Each
+  pixel now has its own threshold: the larger of 20 grey levels and five
+  times how much that pixel normally strays from the background. 200-400
+  candidates a frame instead, and every real clip finds its shot.
+- **Reading 4K video was the slow part.** OpenCV decoded the iPhone's 4K HDR
+  video at 7 frames a second, most of it converting colour on one core; a
+  two-minute clip took over twenty minutes just to read. Frames now come
+  from PyAV (FFmpeg on every core), turned upright to match, with HDR's
+  colour matched to OpenCV's by a curve learned from the first frame; the
+  frames the net is found on still come from OpenCV, because the outline
+  decides where the camera is and even a few grey levels moved it.
+- **The blade carrying the puck counted as flight.** A detector sensitive
+  enough to see the puck in flight sees it being carried too, slowly, before
+  the release: 40 frames of it at 240 fps pulled one shot from 39 to 31 mph.
+  Speed is now fitted from the first step at 65% of the pace the flight
+  settles at.
+- **Tracks ran on past the impact.** A stray point after a gap, off the
+  line the puck was on (the netting springing back), is dropped at 60 fps
+  and up, and near the net a sharp turn or a jump in speed (a drop into the
+  mesh, a bounce off the bar) ends the track.
+- **Skating counted as shots.** Tracks timed at under 12 mph are not shots;
+  on the 2.6-minute session that set aside three slow movers of 5-11 mph.
+- **A distance check.** When the flights start well behind the shooting spot
+  given, the report says where they seem to start. On the two new
+  slow-motion clips that is about 21-23 ft rather than 18.75.
+
+Tried and dropped: sharpening the net outline to a fraction of a pixel on
+the clip's median frame (worse on synthetic clips with exact outlines), and
+decoding straight to grey at working size (faster, but a grey level of
+difference at the net, where the puck overlaps the red post, moved a
+synthetic shot's last sighting 5 px and its speed 7%; it stays available as
+``grey_decode``).
 
 ### The first real clip
 

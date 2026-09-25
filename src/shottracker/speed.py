@@ -51,6 +51,9 @@ class SpeedEstimate:
     # Estimators whose answer was physically impossible and so set aside.  Kept
     # for diagnosis; it says nothing about the speed that was reported.
     rejected: dict[str, float] = field(default_factory=dict)
+    # Where the flight appears to have started, when that disagrees with the
+    # shooting distance given (see estimate_time_of_flight).
+    implied_distance_ft: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +64,8 @@ class SpeedEstimate:
             "notes": list(self.notes),
             "alternatives_mph": {k: round(float(v), 1) for k, v in self.alternatives.items()},
             "rejected_mph": {k: round(float(v), 1) for k, v in self.rejected.items()},
+            "implied_distance_ft": (None if self.implied_distance_ft is None
+                                    else round(float(self.implied_distance_ft), 1)),
         }
 
 
@@ -141,6 +146,48 @@ def goal_line_crossing(
     return xy, f_cross
 
 
+def in_flight(s: np.ndarray, frames: np.ndarray, min_points: int = 4) -> tuple[np.ndarray, np.ndarray]:
+    """The part of a track after the stick let go.
+
+    A wrist shot starts with the blade carrying the puck, slowly, before it
+    leaves at full speed; a detector sensitive enough to see the puck in
+    flight sees that too.  On a real shot 40 frames of it at 240 fps pulled
+    the fitted speed from 39 to 31 mph.  In flight the puck's progress ``s``
+    along its line grows at a steady rate; on the blade, at a fraction of
+    it.  So the flight starts at the first step at ``FLIGHT_PACE`` of the
+    pace the later half of the track holds.
+
+    Not "most": when the camera is only roughly placed a real flight can seem
+    to speed up along its line, and waiting for most of the final pace then
+    trims real flight away.  Not "half" either: the blade's last push before
+    the release runs at about half flight pace, and on a real 60 fps shot
+    counting it as flight read 42 mph for a 47 mph shot.
+    """
+    n = len(s)
+    if n < 2 * min_points:
+        return s, frames
+    half = n // 2
+    steady = np.median(np.diff(s[half:]) / np.maximum(np.diff(frames[half:]), 1e-9))
+    if steady <= 0:
+        return s, frames
+    pace = FLIGHT_PACE * steady
+    w = max(2, n // 10)
+    for i in range(0, n - min_points):
+        j = min(i + w, n - 1)
+        rate = (s[j] - s[i]) / max(frames[j] - frames[i], 1e-9)
+        if rate >= pace:
+            # The window has reached flight pace; the release is the first
+            # step inside it that has.
+            for k in range(i, j):
+                if (s[k + 1] - s[k]) / max(frames[k + 1] - frames[k], 1e-9) >= pace:
+                    return (s[k:], frames[k:]) if n - k >= min_points else (s, frames)
+            return s[i:], frames[i:]
+    return s, frames
+
+
+FLIGHT_PACE = 0.65
+
+
 def estimate_time_of_flight(
     track: Track,
     cam: CameraModel,
@@ -167,6 +214,7 @@ def estimate_time_of_flight(
     if ok.sum() < 3:
         return None
     s, frames = s[ok], frames[ok]
+    s, frames = in_flight(s, frames)
 
     # s should advance linearly with time; its slope is 1 / flight_time.
     slope, intercept = np.polyfit(frames, s, 1)
@@ -206,7 +254,16 @@ def estimate_time_of_flight(
     if cam.focal_assumed:
         conf *= 0.8
         notes.append("the lens was assumed rather than measured from the goal; see the error bar")
-    return SpeedEstimate(mph=mph, method="time_of_flight", confidence=conf, uncertainty_mph=unc, notes=notes)
+
+    # The flight line runs from the stated shooting spot (s = 0) to the net
+    # (s = 1).  A puck first seen in flight well *behind* s = 0 was shot from
+    # further out than stated -- on a slow-motion clip it sat 23% back, as if
+    # from 23 ft rather than 18.75 -- and every speed scales with that.
+    implied = None
+    if s[0] < -scfg.release_check_margin:
+        implied = float(scfg.shot_distance_ft * (1.0 - s[0]))
+    return SpeedEstimate(mph=mph, method="time_of_flight", confidence=conf, uncertainty_mph=unc, notes=notes,
+                         implied_distance_ft=implied)
 
 
 def estimate_ballistic_3d(

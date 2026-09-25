@@ -134,6 +134,16 @@ class PuckDetectConfig:
     method: str = "median"
     bg_sample_frames: int = 48
     diff_threshold: float = 20.0     # grey levels away from the background plate
+    # ...or this many times the pixel's own usual spread, if that is more.
+    # Textured ground near the lens and sunlit leaves shimmer; the puck, a
+    # black disc crossing them, clears either threshold easily.  0 disables.
+    noise_threshold_k: float = 5.0
+    # Decode straight to grey at working size for the per-frame pass (see
+    # video.iter_frames): faster, but PyAV's grey differs from OpenCV's by a
+    # grey level or so, and at the net -- the puck over the red post -- that
+    # moved a synthetic shot's last sighting 5 px and its speed 7%.  Off:
+    # full colour frames, shrunk the way the detector was tuned on.
+    grey_decode: bool = False
     mog_history: int = 250
     mog_var_threshold: float = 28.0
 
@@ -170,7 +180,7 @@ class PuckDetectConfig:
     # quarters of the clutter; without it the puck ranked 7th to 25th of ~90
     # candidates a frame and was capped away.
     demote_recurring: bool = True
-    raw_candidates_per_frame: int = 150
+    raw_candidates_per_frame: int = 400
     recurring_window_s: float = 0.125
     recurring_min_window_frames: int = 8
     recurring_min_hits: int = 3       # distinct frames, on each side
@@ -194,6 +204,16 @@ class TrackingConfig:
     # Measured: 0.01 for a puck reappearing from behind a post, 0.24-0.45 for
     # netting and bounces after the impact.
     straggler_off_line: float = 0.15
+    # The end of a flight (see until_impact): a step at 60 fps spacing that
+    # turns more than this, or speeds up by more than this factor, from the
+    # steps before it -- and only once the puck is moving this many pixels a
+    # frame, so that jitter is not taken for a turn.
+    impact_turn_deg: float = 20.0
+    impact_speed_jump: float = 1.4
+    impact_min_step_px: float = 4.0
+    impact_stop_ratio: float = 0.4
+    # ...and only within this many goal widths of the goal's outline.
+    impact_near_goal_frac: float = 0.35
     # Gating radius = base + velocity-scaled term, in units of the goal width.
     gate_base_frac: float = 0.03
     gate_vel_frac: float = 0.55
@@ -279,6 +299,12 @@ class SpeedConfig:
     # How well the player knows that distance.  Speed scales directly with it,
     # so this, not detection noise, usually dominates the error bar.
     distance_uncertainty_ft: float = 1.0
+    # A shot whose flight starts this fraction of the flight or more behind
+    # the stated shooting spot suggests the distance given is short.
+    release_check_margin: float = 0.1
+    # ...and when the shots in a clip agree on it to within this fraction of
+    # the distance given, say so.
+    distance_warn_frac: float = 0.1
     # Lateral offset of the shooter from the centre of the net, in feet
     # (negative = shooter's left).  Used to correct the 3-D flight distance.
     shooter_offset_ft: float = 0.0
@@ -312,6 +338,10 @@ class ShotConfig:
     post_tolerance_in: float = POST_DIAMETER_IN
     # How far outside the mouth we still attribute the shot to this net.
     miss_margin_in: float = 48.0
+    # Slower than this over a timed flight is not a shot: on a real
+    # 2.6-minute session, the shooter skating and stickhandling produced
+    # tracks of 5-11 mph lasting one to three seconds.
+    min_shot_mph: float = 12.0
     # Below the ice is not a place a puck can arrive.  A small allowance covers
     # measurement error; anything further down is a fragment of a trajectory
     # caught mid-flight, well in front of the goal plane, not an impact.

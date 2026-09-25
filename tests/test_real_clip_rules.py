@@ -17,7 +17,7 @@ from shottracker.container import Lens, read_lens
 from shottracker.geometry import GoalPlane, outer_rect
 from shottracker.puck_detect import Candidate, demote_recurring, recurring
 from shottracker.synth import camera_preset
-from shottracker.tracking import Track, build_tracks, clear_sightings, filter_by_clutter
+from shottracker.tracking import Track, build_tracks, clear_sightings, filter_by_clutter, until_impact
 
 # --- the lens, as the phone recorded it -------------------------------------
 
@@ -234,3 +234,73 @@ def test_a_puck_reappearing_on_its_line_after_a_post_still_ends_the_track():
     cands[17] = [_c(17, 100.0 + 20 * 17, 400.0 - 4 * 17)]  # hidden for two frames, then at the net
     t = max(build_tracks(cands, 200.0, cfg, fps=60.0), key=len)
     assert t.end_frame == 17
+
+
+# --- the flight ends at the net ------------------------------------------------
+
+
+def _flight(frames, x0=100.0, y0=400.0, v0=40.0, decay=0.93, angle=-10.0):
+    """A puck flying away from the camera: steady direction, shrinking steps."""
+    cands, x, y, v = {}, x0, y0, v0
+    d = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle))])
+    for f in frames:
+        cands[f] = [_c(f, x, y)]
+        x, y = x + v * d[0], y + v * d[1]
+        v *= decay
+    return cands, (x, y)
+
+
+def test_a_puck_dropping_into_the_net_ends_the_track_where_it_hit():
+    cfg = Config()
+    cands, (x, y) = _flight(range(0, 16))
+    for k, f in enumerate(range(16, 19)):           # then straight down the mesh
+        cands[f] = [_c(f, x + 1.0 * k, y + 9.0 * (k + 1))]
+    whole = Track([c for f in sorted(cands) for c in cands[f]])
+    assert until_impact(whole, 60.0, cfg).end_frame in (15, 16)
+    # A break is only an impact at the net.
+    assert until_impact(whole, 60.0, cfg, near_goal=lambda p: False).end_frame == 18
+
+
+def test_a_bounce_off_the_bar_ends_the_track_where_it_hit():
+    cfg = Config()
+    cands, (x, y) = _flight(range(0, 16))
+    for k, f in enumerate(range(16, 19)):           # flies off three times faster
+        cands[f] = [_c(f, x + 30.0 * (k + 1), y - 4.0 * (k + 1))]
+    whole = Track([c for f in sorted(cands) for c in cands[f]])
+    assert until_impact(whole, 60.0, cfg).end_frame <= 16
+
+
+def test_a_flight_that_slows_on_screen_is_not_cut_short():
+    cfg = Config()
+    cands, _ = _flight(range(0, 20), decay=0.9)
+    whole = Track([c for f in sorted(cands) for c in cands[f]])
+    assert until_impact(whole, 60.0, cfg).end_frame == 19
+    assert until_impact(whole, 30.0, cfg) is whole
+
+
+# --- a distance that does not fit the flight -----------------------------------
+
+
+def _shot_with(implied):
+    from shottracker.shots import Shot
+    from shottracker.speed import SpeedEstimate
+
+    sp = SpeedEstimate(mph=50.0, method="time_of_flight", confidence=0.9, implied_distance_ft=implied)
+    return Shot(index=0, first_tracked_frame=0, impact_frame=10, impact_image=(0.0, 0.0), impact_goal_in=(0.0, 30.0),
+                outcome="on_net", zone_key=None, zone_label=None, miss_detail=None, speed=sp, track_length=10,
+                quality=0.8)
+
+
+def test_flights_that_start_further_out_than_stated_are_reported():
+    cfg = Config()
+    cfg.speed.shot_distance_ft = 18.75
+    note = pipeline._distance_check([_shot_with(23.0), _shot_with(22.5), _shot_with(None)], cfg)
+    assert note and "23 ft" in note and "18.75" in note
+
+
+def test_nothing_is_said_when_the_distance_fits_or_too_few_shots_disagree():
+    cfg = Config()
+    cfg.speed.shot_distance_ft = 18.75
+    assert pipeline._distance_check([_shot_with(None), _shot_with(None)], cfg) is None
+    assert pipeline._distance_check([_shot_with(23.0), _shot_with(None), _shot_with(None)], cfg) is None
+    assert pipeline._distance_check([_shot_with(19.5)], cfg) is None
