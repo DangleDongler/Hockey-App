@@ -38,6 +38,24 @@ def test_the_fast_reader_scales_while_decoding(angled_clip):
     assert frames and all(f.shape[:2] == (size[1], size[0]) for f in frames)
 
 
+def test_a_frame_turned_after_shrinking_is_the_frame_shrunk_after_turning():
+    """Phone video is stored sideways; turning only the small frame is the same
+    picture, for a quarter of a 4K frame's cost."""
+    import cv2
+
+    rng = np.random.default_rng(0)
+    img = cv2.GaussianBlur(rng.integers(0, 255, (540, 960, 3), dtype=np.uint8), (5, 5), 0)
+    lut = np.clip(np.arange(256) * 1.1, 0, 255).astype(np.uint8)
+    for turn in (90, 270):
+        upright = cv2.LUT(cv2.rotate(img, video._TURN[turn]), lut)
+        for got, want in ((video.finish((img, turn, lut), size=(240, 427)),
+                           cv2.resize(upright, (240, 427), interpolation=cv2.INTER_AREA)),
+                          (video.finish((img, turn, lut), scale=0.4),
+                           cv2.resize(upright, None, fx=0.4, fy=0.4, interpolation=cv2.INTER_AREA))):
+            assert got.shape == want.shape
+            assert np.abs(got.astype(int) - want.astype(int)).max() <= 1
+
+
 def test_opencv_is_the_fallback_without_pyav(angled_clip, monkeypatch):
     monkeypatch.setattr(video, "av", None)
     frames = list(video.iter_frames(angled_clip["path"]))

@@ -170,6 +170,62 @@ def iter_frames(path: str, size: tuple[int, int] | None = None, gray: bool = Fal
         cap.release()
 
 
+def finish(raw: tuple, size: tuple[int, int] | None = None, scale: float | None = None) -> np.ndarray:
+    """An unfinished frame from ``iter_raw_frames``, upright and at ``size``.
+
+    Colour-matched at full size, then shrunk with OpenCV's area filter in the
+    picture's stored orientation, then turned upright: the same picture as
+    turning the full frame and shrinking it (a grey level apart on one pixel
+    in 40,000 of a real 4K frame), but only the small one is turned -- that
+    was a quarter of a 4K frame's cost.  Cheap to run on any thread.
+
+    ``scale`` shrinks by a factor instead of to a size; OpenCV weighs the
+    pixels a shade differently for the two, and the detector's results can
+    feel even that, so each caller keeps the one it has always used.
+    """
+    img, turn, lut = raw
+    if lut is not None:
+        img = cv2.LUT(img, lut)
+    if scale is not None and scale < 1.0:
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    elif size is not None:
+        w, h = size
+        sw, sh = (h, w) if turn in (90, 270) else (w, h)
+        if (img.shape[1], img.shape[0]) != (sw, sh):
+            img = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
+    return cv2.rotate(img, _TURN[turn]) if turn else img
+
+
+def iter_raw_frames(path: str) -> Iterator[tuple]:
+    """Every frame in order as decoded, not yet colour-matched, shrunk or turned.
+
+    Yields (picture, degrees to turn it, colour look-up table or None) for
+    ``finish``, so that everything but decoding can happen on other threads.
+    """
+    opened = _open_av(path)
+    if opened is not None:
+        container, stream = opened
+        try:
+            lut = None
+            if _is_hdr(stream):
+                lut = _tone_curve(path, container, stream)
+                container.seek(0, stream=stream)
+            for frame in _decode(container, stream):
+                yield frame.to_ndarray(format="bgr24"), _turn(frame), lut
+        finally:
+            container.close()
+        return
+    cap = cv2.VideoCapture(path)
+    try:
+        while True:
+            ok, img = cap.read()
+            if not ok:
+                break
+            yield img, 0, None
+    finally:
+        cap.release()
+
+
 def keyframes(path: str, n: int, size: tuple[int, int] | None = None,
               gray: bool = False) -> list[np.ndarray] | None:
     """``n`` evenly spread keyframes, decoded alone, or None if there are fewer.

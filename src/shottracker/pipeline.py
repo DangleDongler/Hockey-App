@@ -25,7 +25,7 @@ from .puck_detect import Candidate, PuckDetector, build_background_and_noise, de
 from .shots import Shot, approaches_goal, dedupe_shots, shot_from_track
 from .stabilize import CameraMotion, estimate_motion, interpolate, measure
 from .tracking import Track, build_tracks, filter_by_clutter, filter_by_speed, revisits, until_impact
-from .video import iter_frames, keyframes
+from .video import finish, iter_frames, iter_raw_frames, keyframes
 
 
 @dataclass
@@ -406,10 +406,20 @@ def sample_frames(path: str, n: int, total: int, exact: bool = True,
             f = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
         return f
 
+    def decoded():
+        """Frames from the fast reader, each still to be finished."""
+        if gray:
+            return ((f, None) for f in iter_frames(path, size, gray))
+        return ((None, raw) for raw in iter_raw_frames(path))
+
+    def done(item) -> np.ndarray:
+        f, raw = item
+        return shaped(f if raw is None else finish(raw, size))
+
     frames: list[np.ndarray] = []
     if total <= 0:
-        for f in iter_frames(path, size if gray else None, gray):
-            frames.append(shaped(f))
+        for item in decoded():
+            frames.append(done(item))
             if len(frames) >= n:
                 break
         return frames
@@ -419,10 +429,10 @@ def sample_frames(path: str, n: int, total: int, exact: bool = True,
     if total / max(len(wanted), 1) <= SEQUENTIAL_SAMPLE_STRIDE:
         if gray or fast:
             # Grey frames come scaled from the decoder; colour ones are read
-            # full size and shrunk afterwards, exactly as the per-frame pass.
-            for idx, f in enumerate(iter_frames(path, size if gray else None, gray)):
+            # full size and finished exactly as the per-frame pass does.
+            for idx, item in enumerate(decoded()):
                 if idx in keep:
-                    frames.append(shaped(f))
+                    frames.append(done(item))
                 if idx >= last:
                     break
             return frames
@@ -599,13 +609,15 @@ def analyze(
     # Keep everything for now when clutter is to be sorted out over the
     # whole clip; the per-frame cap is applied after that.
     raw_cap = cfg.puck.raw_candidates_per_frame if cfg.puck.demote_recurring else None
-    def one_frame(frame: np.ndarray, i: int) -> list[Candidate]:
-        small = frame
-        if not grey:
-            aligned = motion.compensate(frame, i) if motion.needed else frame
-            small = aligned
-            if scale < 1.0:
-                small = cv2.resize(aligned, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    def one_frame(frame, i: int) -> list[Candidate]:
+        if grey:
+            return detector.detect(frame, i, limit=raw_cap)
+        if not motion.needed:
+            return detector.detect(finish(frame, scale=scale), i, limit=raw_cap)
+        aligned = motion.compensate(finish(frame), i)
+        small = aligned
+        if scale < 1.0:
+            small = cv2.resize(aligned, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         return detector.detect(small, i, limit=raw_cap)
 
     # Frames are independent against a fixed plate, and OpenCV lets go of
@@ -614,7 +626,10 @@ def analyze(
     # state from frame to frame and so stays one at a time.
     workers = 1 if detector.stateful else max(1, min(cfg.puck.workers or (os.cpu_count() or 1), 8))
     idx = 0
-    frames_in = iter_frames(path, work_size if grey else None, gray=grey)
+    # Colour frames come as decoded; matching, shrinking and turning them
+    # happens on the workers (see video.finish), leaving only the decoding
+    # here -- half of a 4K frame's cost used to be spent on this thread.
+    frames_in = iter_frames(path, work_size, gray=True) if grey else iter_raw_frames(path)
     if workers == 1:
         for frame in frames_in:
             found = one_frame(frame, idx)
