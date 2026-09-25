@@ -254,12 +254,17 @@ class TrackingConfig:
     min_clear_sightings: int = 3
     clutter_radius_frac: float = 0.5
     clutter_max_neighbours: int = 10
-    # A track whose sightings keep turning up again in place -- more than this
-    # fraction of the nearby frames, either side -- is things flickering where
-    # they stand, not a puck (see tracking.revisits).  Real shots: 2-3%; a line
-    # of lamps and posts flickering while the camera settled in the first
-    # frames of a real clip, read as an 89 mph shot: 43%.
+    # In a clip's first moments, while the camera settles, a track whose
+    # sightings keep turning up again in place -- more than this fraction of
+    # the nearby frames, either side -- is things flickering where they stand,
+    # not a puck (see tracking.revisits).  A line of lamps and posts doing
+    # that in the first 8 frames of a real clip read as an 89 mph shot: 43%;
+    # real shots in flight, 0-8%.  Only then: later on, the recurring-clutter
+    # test (which needs frames before as well as after) has it covered, and a
+    # real shot's track can start where the puck sat on the stick -- one in a
+    # real session scored 31% and was dropped.
     max_revisit_frac: float = 0.2
+    revisit_check_first_s: float = 0.5
 
     ransac_iterations: int = 60
     # Seed pairs grow with the square of the candidates per frame, so a bad

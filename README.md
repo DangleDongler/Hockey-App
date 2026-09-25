@@ -672,6 +672,16 @@ The synthetic chest-height camera with the lens *solved from the outline*
 still reads speeds 14% high: the lens comes out 15% long from a clean
 outline. Pick the lens in the form for slow motion, which does not record it.
 
+Tried and dropped: following a leaning post's whole width row by row. Posts
+are found by their long upright runs of colour, which shaves a post leaning
+6-7 deg (a phone held off level) to an upright sliver, and the outline's side
+with it; taking each row's full run of colour fixed the lean but picked up
+clutter touching the posts, and on the newer slow-motion clips the outline
+then changed so much from sample to sample that their 60 fps copies read
+54-82% fast. Those two clips also fit a view of about 66 deg best rather than
+the 0.5x lens's 74, as if slow motion cropped the sensor; until that is known
+they are left as they were.
+
 ### The first real clip
 
 The accuracy table above is against rendered clips. The first real clip — a kid

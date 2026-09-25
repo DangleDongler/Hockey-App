@@ -657,8 +657,9 @@ def analyze(
     tracks, in_clutter = filter_by_clutter(tracks, raw_xy, goal_width_px, info.fps, cfg)
     window = max(cfg.puck.recurring_min_window_frames, int(round(cfg.puck.recurring_window_s * info.fps)))
     gap = max(2, int(round(0.0125 * info.fps)))
-    in_place = [t for t in tracks
-                if revisits(t, raw_xy, puck_px_small / scale, window, gap) > cfg.track.max_revisit_frac]
+    settling = cfg.track.revisit_check_first_s * info.fps
+    in_place = [t for t in tracks if t.start_frame < settling
+                and revisits(t, raw_xy, puck_px_small / scale, window, gap) > cfg.track.max_revisit_frac]
     tracks = [t for t in tracks if not any(t is p for p in in_place)]
     near = _near_goal(plane, goal_width_px, cfg)
     tracks = [until_impact(t, info.fps, cfg, near) for t in tracks]
@@ -698,7 +699,7 @@ def analyze(
     if in_place:
         warnings.append(
             f"not counted as shots: {len(in_place)} line(s) of things flickering where they stand -- lamps, "
-            "posts, edges, often in the first moments of a clip while the camera settles -- that happened "
+            "posts, edges -- in the first moments of the clip while the camera settled, that happened "
             "to line up. A puck passes any spot once."
         )
     if started_at_goal:
