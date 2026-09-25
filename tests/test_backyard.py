@@ -96,3 +96,44 @@ def test_with_the_lens_known_gravity_pins_the_speed(backyard):
     for shot, t in zip(result.shots, backyard["shots"]):
         ballistic = shot.speed.mph if shot.speed.method == "ballistic_3d" else shot.speed.alternatives["ballistic_3d"]
         assert ballistic == pytest.approx(t["release_speed_mph"], rel=0.03)
+
+
+# --- a lawn in front of the net ----------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def lawn(workdir):
+    """From the ground, 7 in of grass hides the bottom of the posts, as it did
+    on every real clip; the outline stops where the red does."""
+    from shottracker.synth import camera_preset
+
+    path = os.path.join(workdir, "lawn.mp4")
+    shots = [SynthShot(release_z_in=225, release_x_in=-20, target_x_in=tx, target_y_in=ty, flight_time_s=ft,
+                       start_time_s=0.4 + 0.9 * i)
+             for i, (tx, ty, ft) in enumerate([(-25, 38, 0.30), (20, 14, 0.34), (5, 28, 0.28)])]
+    return render_session(path, shots, camera=camera_preset("backyard", 1080, 1920), fps=60, grass_in=7.0,
+                          ice_markings=False, seed=2)
+
+
+def _on_the_lawn(truth, restore: bool):
+    cfg = Config()
+    cfg.speed.shot_distance_ft = 18.75
+    cfg.speed.shooter_offset_ft = -20 / 12
+    cfg.camera.hfov_deg = 70.0              # the lens known, as a phone's own video records it
+    cfg.net.restore_hidden_feet = restore
+    r = analyze(truth["path"], cfg)
+    feet = float(np.abs(r.net.quad[2:] - np.asarray(truth["net_quad"])[2:]).max())
+    marks = []
+    for t in truth["shots"]:
+        s = next(s for s in r.shots if abs(s.impact_frame - t["impact_frame"]) <= 3)
+        marks.append(float(np.hypot(s.impact_goal_in[0] - t["impact_x_in"], s.impact_goal_in[1] - t["impact_y_in"])))
+    return r, feet, marks
+
+
+def test_posts_hidden_in_grass_are_put_back(lawn):
+    _, feet_off, _ = _on_the_lawn(lawn, restore=False)
+    fixed, feet_fixed, marks = _on_the_lawn(lawn, restore=True)
+    assert feet_off > 10.0, "the scene should hide the feet"
+    assert feet_fixed < 5.0
+    assert np.mean(marks) < 4.0
+    assert any("look hidden" in w for w in fixed.warnings)

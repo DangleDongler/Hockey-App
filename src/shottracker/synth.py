@@ -158,6 +158,7 @@ def draw_scene(
     *,
     ice_markings: bool = True,
     rng: np.random.Generator | None = None,
+    grass_in: float = 0.0,
 ) -> np.ndarray:
     """The static part of the frame: ice, boards, markings and the goal."""
     rng = rng or np.random.default_rng(0)
@@ -221,6 +222,14 @@ def draw_scene(
     ring = np.vstack([outer, inner[::-1]])
     _fill_poly_world(img, cam, ring, red)
 
+    if grass_in > 0:
+        # A lawn in front of the net, its blades grass_in tall: from low down
+        # it hides the bottom of the posts, as it did on every real clip.
+        lawn = [(-160.0, 0.0, 3.0), (160.0, 0.0, 3.0), (160.0, 0.0, 400.0), (-160.0, 0.0, 400.0)]
+        _fill_poly_world(img, cam, lawn, (58, 128, 72))
+        blades = [(-160.0, 0.0, 3.0), (160.0, 0.0, 3.0), (160.0, grass_in, 3.0), (-160.0, grass_in, 3.0)]
+        _fill_poly_world(img, cam, blades, (52, 118, 64))
+
     noise = rng.normal(0.0, 3.0, img.shape).astype(np.float32)
     return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
@@ -260,6 +269,7 @@ def render_session(
     distractor: bool = False,
     net_sway: bool = False,
     foliage: bool = False,
+    grass_in: float = 0.0,
 ) -> dict:
     """Render a clip and return its ground truth.
 
@@ -269,7 +279,8 @@ def render_session(
     ``net_sway`` shakes the netting for a moment after every impact, the way a
     real net keeps moving once the puck has stopped; ``foliage`` puts a bush
     beside the goal whose leaves never keep still.  Both are what a backyard
-    adds to a rink, and both made fake shots on real footage.
+    adds to a rink, and both made fake shots on real footage.  ``grass_in``
+    puts a lawn in front of the net whose blades hide the bottom of the posts.
     """
     goal = goal or GoalSpec()
     if isinstance(camera, str):
@@ -284,7 +295,7 @@ def render_session(
         duration_s = max(s.start_time_s + s.flight_time_s for s in shots) + 0.45
 
     n_frames = int(round(duration_s * fps))
-    background = draw_scene(cam, goal, ice_markings=ice_markings, rng=rng)
+    background = draw_scene(cam, goal, ice_markings=ice_markings, rng=rng, grass_in=grass_in)
 
     # The netting's footprint on screen: the bag behind the mouth.
     hw_in, depth = goal.mouth_width_in / 2.0, -40.0
