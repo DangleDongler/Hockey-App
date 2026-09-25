@@ -45,6 +45,9 @@ These matter more than anything else for accuracy:
   screen width. The whole goal must be in view, including where the posts
   meet the ground.
 - Measure how far the shooting spot is from the goal line, in feet.
+- Measure the net's opening once: inside width, and height from the ground
+  to the underside of the crossbar. Many backyard nets are not 6 ft x 4 ft,
+  and every mark's height depends on it.
 - Keep the pile of spare pucks out of the puck's path, one shooter at a
   time, and a couple of seconds between shots. A clip can hold many shots.
 
@@ -57,8 +60,11 @@ These matter more than anything else for accuracy:
 - Or from the computer: AirDrop or copy the videos over and drag them onto
   the page.
 - Fill in the shooting distance, the lens you filmed with (0.5x or 1x),
-  and what you were aiming at. Change the goal size only if the net isn't
-  6 ft x 4 ft (72 x 48 in). The page remembers these for next time.
+  the net's opening in inches, and what you were aiming at. The page
+  remembers these for next time.
+- If the notes under the results say the net's outline fits a different
+  size, measure the net again: either it is that size (enter it), or the
+  app is finding its outline short, which is worth telling us about.
 - Press Analyze. A 30-second clip at 1080p takes a minute or two; 4K
   takes several.
 
@@ -70,8 +76,8 @@ If the app can't find the net, it asks you to tap its four corners.
 5. HOW MUCH TO TRUST IT
 -----------------------
 Measured on real backyard clips so far:
-- 60 fps: most shots within about 5% on speed and a few inches on the
-  mark, but now and then one is off by up to about 20%.
+- 60 fps: most shots within about 4% on speed and 2 inches on the mark,
+  but now and then one is off by up to about 20% on speed.
 - Slow motion: the most accurate. Pick the lens in the form, because slow
   motion doesn't record it.
 - 30 fps: not accurate enough to trust.

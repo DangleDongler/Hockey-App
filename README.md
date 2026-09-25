@@ -414,13 +414,15 @@ On four real slow-motion shots (backyard, phone lying on the ground about
 | | Speed vs the slow-motion reading | Mark vs the slow-motion reading |
 | --- | --- | --- |
 | 60 fps, shot 1 (just wide) | within 2% | within 2.4 in |
-| 60 fps, shot 2 (into the net) | 0 to −5% | within 2.9 in |
-| 60 fps, shot 3 (over the bar) | −9% to +12% | 0.3–8 in |
-| 60 fps, shot 4 (off the crossbar) | +1% to +24% | 2–4 in |
-| 30 fps, all four | −27% to +61% | up to 85 in; 4 of 32 versions read nothing |
+| 60 fps, shot 2 (into the net) | −5% to +2% | within 2.2 in |
+| 60 fps, shot 3 (over the bar) | −2% to +11% | within 2.5 in |
+| 60 fps, shot 4 (off the crossbar) | +5% to +24% | 2–4 in |
+| 30 fps, all four | −13% to +45% | median 3 in, up to 52 in; 4 of 32 versions read nothing |
 
 (Against each shot's slow-motion reading from before the second pass below,
-so that a change cannot move its own yardstick.)
+so that a change cannot move its own yardstick. Across all sixteen 60 fps
+versions: speed within 3.8% at the median, marks within 1.7 in at the median
+and 3.8 in at worst.)
 
 The copies are written losslessly: an earlier table here came from re-encoded
 copies, and the re-encoding alone blurred the small net's pipes and some
@@ -504,7 +506,7 @@ flight frame by frame:
 | --- | --- | --- |
 | 60 fps #1, top right corner | frames 83½ → 100: 47 mph (45–50 within a frame) | 47.2 mph |
 | 60 fps #2, top right | frames 58½ → 74: 50 mph (47–54 within a frame) | 48.4 mph |
-| First slow-motion clip (below) | 39 mph | 37.4 mph |
+| First slow-motion clip (below) | 39 mph | 39.5 mph |
 
 What each clip broke, and what changed:
 
@@ -585,6 +587,75 @@ decoding straight to grey at working size (faster, but a grey level of
 difference at the net, where the puck overlaps the red post, moved a
 synthetic shot's last sighting 5 px and its speed 7%; it stays available as
 ``grey_decode``).
+
+### A third pass: many shots in one clip, and where the phone really was
+
+A real practice session is one long clip with a shot every few seconds, so
+the synthetic backyard was extended to that: 20 shots in 40 s at 60 fps,
+1080p, a bush beside the net whose leaves never keep still, the netting
+shaking after every hit, and a stick-sized blob sweeping past every few
+seconds. Two phone spots: on the ground behind and beside the shooter (the
+real clips), and chest height at about 45°. With the lens known, as it is
+for normal phone video:
+
+| | Before | After |
+| --- | --- | --- |
+| Ground: shots found | 17 of 20 | 19 of 20, nothing made up |
+| Ground: speed, median / worst | 2.0% / 5.1% | 1.3% / 4.9% |
+| Ground: mark, median / worst | 1.8 / 6.3 in | 2.4 / 6.3 in (two more, harder, shots found) |
+| Chest height: shots found | 20 of 20 | 20 of 20, nothing made up |
+| Chest height: speed, median / worst | 4.8% / 17.2% | 4.1% / 6.4% |
+| Chest height: mark, median / worst | 4.8 / 25.5 in | 2.5 / 7.1 in |
+
+At half that resolution (540 px wide) the ground spot found nothing at all:
+the puck is a few pixels across there and loses to the leaves. Film at 1080p
+or more. At 30 fps the same session finds only 6-9 of the 20 shots and makes
+up 2-3: film at 60.
+
+What changed:
+
+- **The camera is fitted to the goal's corners.** The pose used to be read
+  straight off the homography, which spreads any error in the outline into
+  where the camera is: a pixel of error moved it 17-35 in. With the lens
+  known, the pose is now fitted to the four corners themselves (OpenCV's
+  planar solver), 3-13 in from the same corners. That alone took the chest
+  camera's speed error from +4.8% to -2.2% when timed against the true
+  impact. With the lens solved from the outline instead, the homography's
+  pose stays: it is the one consistent with that solve, and fitting on top
+  of it made the benchmark worse.
+- **The net's size is checked.** A goal's proportions can be read from its
+  outline once the lens is known. Every real clip so far, entered as 72 x 48,
+  fits a goal about 72 x 40-42 in to a pixel or less, against 2.5-5 px for
+  72 x 48 -- and that fit puts the phone where it was, on the ground 24-26 ft
+  out, where 72 x 48 puts it nine feet underground. Either that net is
+  smaller than regulation or its outline is found short (grass over the
+  bottom of the posts, or the crossbar's lower edge). The report now says
+  so; until it is settled, fitting the pose to those corners would make
+  things worse, so it is only done when the outline fits the size entered.
+- **Crowded clutter ranks last.** A bush in the wind is dozens of leaves that
+  each move too far to count as recurring, and they took every place under
+  the per-frame cap from a puck crossing open ground. Candidates in a crowd
+  -- more than 10 others within half a goal width -- now rank after the ones
+  standing alone. On the real clips' 60 fps versions that took marks from
+  2.1 to 1.7 in at the median and 7.9 to 3.8 in at worst; at 30 fps, 4.4 to
+  2.9 in and 85 to 52 in. The first slow-motion clip now reads 39.5 mph
+  against a hand-timed 39.
+- **A sighting after the impact is dropped.** The frame after a hit, a track
+  can pick up the netting springing back or a leaf at the same pace, and end
+  on it: 6 of the 20 chest-height shots did, 50-80 px past where the puck
+  stopped. Timed from the sightings before it, such a last sighting comes
+  after the puck had reached the goal line, and is dropped (60 fps and up,
+  lens known, only after missing frames).
+- **Long clips are faster.** Frames are searched for the puck on every core,
+  and salvaging the straight part of a bent track no longer tries every
+  stretch: 2.6 minutes of 1080p30 in about 3 minutes.
+- **"The camera moved" needs a quarter of the frames to agree.** One frame
+  thrown off by something big crossing the view read as 12 px of drift on a
+  camera that never moved.
+
+The synthetic chest-height camera with the lens *solved from the outline*
+still reads speeds 14% high: the lens comes out 15% long from a clean
+outline. Pick the lens in the form for slow motion, which does not record it.
 
 ### The first real clip
 
@@ -698,10 +769,13 @@ Still untested on real video, and next in line:
 
 ## Next
 
+- Settle the real net's size (measure the opening). If the outline is being
+  found short rather than the net being small, fix the outline; either way
+  the camera can then be fitted to the corners on real clips too.
+- With the camera fitted to the corners, try the full 3-D flight fit again
+  (set aside because the camera was only accurate near the goal).
 - Calibrate the puck size and blur against real clips to widen the detector's
   size gates without letting sticks in.
-- Session history and trends — is the grouping tightening, is the lean going
-  away, is the release getting quicker.
 - Drills with a sequence of targets (top left, then top right, …). Held back
   for now because a single missed detection would misalign the sequence and
   score every later shot against the wrong target.
