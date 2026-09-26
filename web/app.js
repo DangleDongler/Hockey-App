@@ -15,6 +15,7 @@ const state = {
   clip: 0,         // which clip's footage is showing
   chartHits: [],   // click targets on the shot chart
   mark: { corners: [], img: null, info: null, frame: 0, hover: null, dragging: null, suggested: false, clip: 0 },
+  local: null,     // the clips just uploaded, still on this device: { jobId, files, urls }
 };
 
 // The footage panel shows one clip at a time; everything else is the session.
@@ -114,6 +115,8 @@ $("upload-form").addEventListener("submit", async (e) => {
     const res = await fetch("/api/analyze", { method: "POST", body });
     if (!res.ok) throw new Error((await res.json()).detail ?? `upload failed (${res.status})`);
     state.jobId = (await res.json()).id;
+    forgetLocalClips();
+    state.local = { jobId: state.jobId, files, urls: [] };
     poll();
   } catch (err) {
     showError(err.message);
@@ -192,17 +195,41 @@ function render(result) {
   }
 }
 
+// Clips just uploaded play from this device: nothing to download back over
+// the phone's connection, and nothing lost when the server deletes its copy.
+function localClipUrl(i) {
+  const local = state.local;
+  if (!local || local.jobId !== state.jobId || !local.files[i]) return null;
+  return (local.urls[i] ??= URL.createObjectURL(local.files[i]));
+}
+
+function forgetLocalClips() {
+  for (const u of state.local?.urls ?? []) if (u) URL.revokeObjectURL(u);
+  state.local = null;
+}
+
 function loadClipVideo(then) {
   const video = $("video");
+  const clip = uploadIndex();
+  const local = localClipUrl(clip);
   $("video-hint").textContent = "";
   sizeOverlay();                     // the analysis already told us the dimensions
   video.addEventListener("loadedmetadata", () => { sizeOverlay(); then?.(); }, { once: true });
-  video.addEventListener("error", () => {
-    $("video-hint").textContent =
-      "This browser cannot play the clip's codec, so the overlay is unavailable. " +
+  video.addEventListener("error", async () => {
+    let hint = "This browser cannot play the clip's codec, so the overlay is unavailable. " +
       "The shot chart and numbers below are unaffected.";
+    if (!local) {
+      try {
+        const res = await fetch(`/api/jobs/${state.jobId}/info?clip=${clip}`);
+        if (res.status === 410) {
+          const why = (await res.json()).detail ?? "";
+          hint = why.charAt(0).toUpperCase() + why.slice(1) + ".";
+        }
+      } catch { /* keep the codec explanation */ }
+    }
+    $("video-hint").textContent = hint;
   }, { once: true });
-  video.src = `/api/jobs/${state.jobId}/video?clip=${uploadIndex()}`;
+  video.src = local ?? `/api/jobs/${state.jobId}/video?clip=${clip}`;
 }
 
 function selectClip(i, then) {

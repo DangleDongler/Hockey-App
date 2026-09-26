@@ -7,12 +7,17 @@ rather than one long request that a phone network would drop.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+import mimetypes
 import os
 import shutil
 import tempfile
 import threading
+import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,8 +25,8 @@ from typing import Any
 
 import cv2
 import numpy as np
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from shottracker.camera import ON_GROUND_HEIGHT_IN
@@ -39,6 +44,16 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = int(os.environ.get("SHOTTRACKER_MAX_UPLOAD_MB", "400")) * 1024 * 1024
 ALLOWED_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+
+# Run on the internet rather than at home, the app is behind a password, and
+# the clips themselves are not kept: each is deleted this many hours after it
+# was analysed, and all of them whenever the server shuts down (it sleeps when
+# nobody is using it).  The results -- speeds, marks, history -- stay.  Unset,
+# as at home, nothing asks for a password and nothing is deleted.
+PASSWORD = os.environ.get("SHOTTRACKER_PASSWORD") or None
+KEEP_CLIPS_HOURS = (float(os.environ["SHOTTRACKER_KEEP_CLIPS_HOURS"])
+                    if os.environ.get("SHOTTRACKER_KEEP_CLIPS_HOURS") else None)
+CLEAN_EVERY_S = 600
 
 
 @dataclass
@@ -90,7 +105,107 @@ class Job:
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
 
-app = FastAPI(title="Shot Tracker", version="0.1.0")
+def _busy_dirs() -> set[Path]:
+    """Folders whose clips are in use: being analysed, or being drawn on."""
+    with JOBS_LOCK:
+        busy = {Path(j.video_path).parent for j in JOBS.values() if j.status in ("queued", "running")}
+        by_id = dict(JOBS)
+    with MARKED_LOCK:
+        drawing = [k[0] for k, v in MARKED.items() if v.get("status") == "running"]
+    busy |= {Path(by_id[j].video_path).parent for j in drawing if j in by_id}
+    return busy
+
+
+def delete_old_clips(older_than_s: float) -> int:
+    """Delete clips analysed more than ``older_than_s`` ago, and videos drawn from them.
+
+    A clip counts from when its session was last written (the analysis
+    finishing) or, for a session that never finished, from its upload.
+    Nothing in use is touched.  Returns how many files went.
+    """
+    cutoff = time.time() - older_than_s
+    busy = _busy_dirs()
+    gone = 0
+    for folder in DATA_DIR.iterdir() if DATA_DIR.is_dir() else []:
+        if not folder.is_dir() or folder in busy:
+            continue
+        saved = folder / SESSION_FILE
+        for f in folder.iterdir():
+            if f.suffix.lower() not in ALLOWED_SUFFIXES:
+                continue
+            when = max(f.stat().st_mtime, saved.stat().st_mtime if saved.exists() else 0.0)
+            if when <= cutoff:
+                f.unlink(missing_ok=True)
+                gone += 1
+    return gone
+
+
+def _keep_cleaning(stop: threading.Event) -> None:
+    while not stop.wait(CLEAN_EVERY_S):
+        delete_old_clips(KEEP_CLIPS_HOURS * 3600)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    stop = threading.Event()
+    if KEEP_CLIPS_HOURS is not None:
+        delete_old_clips(KEEP_CLIPS_HOURS * 3600)
+        threading.Thread(target=_keep_cleaning, args=(stop,), daemon=True).start()
+    yield
+    stop.set()
+    if KEEP_CLIPS_HOURS is not None:
+        # Going to sleep: nobody is watching, so no clip is kept past it.
+        delete_old_clips(0.0)
+
+
+app = FastAPI(title="Shot Tracker", version="0.1.0", lifespan=_lifespan)
+
+
+# --- the password ----------------------------------------------------------
+
+LOGIN_COOKIE = "shottracker"
+# Reachable without logging in: the login page itself, and what the phone
+# fetches to put the app on its home screen.
+OPEN_PATHS = {"/login", "/login.html", "/style.css", "/manifest.webmanifest", "/api/health"}
+
+
+def _login_token() -> str:
+    # Changing the password signs every phone out.
+    return hmac.new(PASSWORD.encode(), b"shottracker-login-v1", hashlib.sha256).hexdigest()
+
+
+@app.middleware("http")
+async def _require_login(request: Request, call_next):
+    path = request.url.path
+    if PASSWORD is None or path in OPEN_PATHS or path.startswith("/icons/"):
+        return await call_next(request)
+    if hmac.compare_digest(request.cookies.get(LOGIN_COOKIE, ""), _login_token()):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "log in first"}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(WEB_DIR / "login.html", media_type="text/html")
+
+
+_WRONG_GUESSES = asyncio.Lock()
+
+
+@app.post("/login")
+async def log_in(request: Request, password: str = Form("")):
+    if PASSWORD is not None and hmac.compare_digest(password.encode(), PASSWORD.encode()):
+        res = RedirectResponse("/", status_code=303)
+        res.set_cookie(LOGIN_COOKIE, _login_token(), max_age=365 * 24 * 3600, httponly=True,
+                       samesite="lax", secure=request.url.scheme == "https")
+        return res
+    # A wrong guess costs a second, one at a time: guessing in parallel
+    # gains nothing.
+    async with _WRONG_GUESSES:
+        await asyncio.sleep(1.0)
+    return RedirectResponse("/login?wrong=1", status_code=303)
 
 
 # --- saved sessions ----------------------------------------------------------
@@ -342,6 +457,15 @@ def _clip_or_404(job: Job, clip: int) -> ClipJob:
     return job.clips[clip]
 
 
+def _clip_file(job: Job, clip: int) -> str:
+    """The clip's video on disk, or 410 when it was deleted after analysis."""
+    path = _clip_or_404(job, clip).video_path
+    if not Path(path).exists():
+        raise HTTPException(410, "the video was deleted from the server after analysis, to keep it private; "
+                                 "the shots, speeds and marks are kept")
+    return path
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     return _job_or_404(job_id).public()
@@ -360,7 +484,7 @@ def get_frame(job_id: str, frame: int = 0, clip: int = 0):
     """A single decoded frame, so the browser can show it even for codecs it
     cannot play. Marking the net by hand depends on this."""
     job = _job_or_404(job_id)
-    cap = cv2.VideoCapture(_clip_or_404(job, clip).video_path)
+    cap = cv2.VideoCapture(_clip_file(job, clip))
     if not cap.isOpened():
         raise HTTPException(404, "the clip could not be opened")
     try:
@@ -388,7 +512,7 @@ def suggest_net(job_id: str, frame: int = 0, clip: int = 0):
     a suggestion: the player confirms it or drags the corners.
     """
     job = _job_or_404(job_id)
-    cap = cv2.VideoCapture(_clip_or_404(job, clip).video_path)
+    cap = cv2.VideoCapture(_clip_file(job, clip))
     try:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(frame, max(total - 1, 0))))
@@ -409,7 +533,7 @@ def suggest_net(job_id: str, frame: int = 0, clip: int = 0):
 def get_info(job_id: str, clip: int = 0):
     """Dimensions and length, needed to scale hand-placed corners correctly."""
     job = _job_or_404(job_id)
-    cap = cv2.VideoCapture(_clip_or_404(job, clip).video_path)
+    cap = cv2.VideoCapture(_clip_file(job, clip))
     try:
         info = {
             "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
@@ -434,6 +558,10 @@ def reanalyze(job_id: str, background: BackgroundTasks, net_quad: str = Form(...
     target = _clip_or_404(job, clip)
     if job.status == "running":
         raise HTTPException(409, "this session is still being analyzed")
+    # Every clip that will be read again must still be there.
+    for i, c in enumerate(job.clips):
+        if i == clip or (c.result is None and not c.skipped):
+            _clip_file(job, i)
     try:
         vals = [float(v) for v in net_quad.replace(";", ",").split(",") if v.strip()]
     except ValueError:
@@ -481,10 +609,7 @@ def retarget(job_id: str, target: str | None = Form(None), target_radius_in: flo
 @app.get("/api/jobs/{job_id}/video")
 def get_video(job_id: str, clip: int = 0):
     job = _job_or_404(job_id)
-    path = Path(_clip_or_404(job, clip).video_path)
-    if not path.exists():
-        raise HTTPException(404, "the clip is no longer on disk")
-    return FileResponse(path)
+    return FileResponse(_clip_file(job, clip))
 
 
 # Videos with the shots drawn on, keyed by (job, clip); rendered on request.
@@ -533,8 +658,7 @@ def make_marked(job_id: str, background: BackgroundTasks, clip: int = Form(0)):
         raise HTTPException(404, "no such clip in this session")
     clip_dict = clips[clip]
     upload = _clip_or_404(job, clip_dict.get("upload_index", clip))
-    if not Path(upload.video_path).exists():
-        raise HTTPException(404, "the clip is no longer on disk")
+    _clip_file(job, clip_dict.get("upload_index", clip))
     key = (job_id, clip)
     with MARKED_LOCK:
         if MARKED.get(key, {}).get("status") == "running":
@@ -588,12 +712,17 @@ def list_sessions():
 
 @app.get("/api/health")
 def health():
+    if PASSWORD is not None:   # open to all, so it says nothing more
+        return {"ok": True}
     with JOBS_LOCK:
         n = len(JOBS)
     return {"ok": True, "jobs": n}
 
 
 _restore_saved_sessions()
+
+# What a phone reads to put the app on its home screen.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

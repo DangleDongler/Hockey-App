@@ -112,6 +112,37 @@ list of past sessions to reopen, re-score against a different target, or
 delete. A handful of shots makes a noisy average, so the comparison is always
 against several earlier sessions, never just the last one.
 
+### On the internet, for the phone
+
+The same app runs on a server so a phone can use it anywhere (step by step
+for a Mac: `PUT IT ON YOUR PHONE.txt`). `Dockerfile` builds it, pinned to the
+versions the tests use (`deploy/requirements.txt`); `fly.toml` and
+`deploy/fly-setup.sh` put it on Fly.io, where it sleeps when unused and wakes
+on the next visit. Two settings change how it behaves, and both are unset at
+home:
+
+- `SHOTTRACKER_PASSWORD`: every page and API call needs a login cookie,
+  set by `/login` (HttpOnly, SameSite=Lax, a year long, void if the
+  password changes). A wrong guess costs a second, one at a time. What a
+  phone fetches to put the app on its home screen (the manifest and icons)
+  stays open.
+- `SHOTTRACKER_KEEP_CLIPS_HOURS`: clips, and videos drawn from them, are
+  deleted that many hours after their session was analysed (checked every
+  10 minutes), and all of them when the server shuts down -- which on
+  Fly.io is every time it goes to sleep. Results and history stay; a
+  reopened session says its video was deleted rather than blaming the
+  codec. Clips just uploaded play from the phone itself (a `blob:` URL), so
+  nothing is downloaded back over its connection.
+
+It is also a web app for the home screen (`web/manifest.webmanifest`, an
+Apple touch icon, standalone display). Memory was trimmed for a small
+server: the full-size sample frames are let go once the net is found, the
+background plate's median is taken a band of rows at a time (identical
+numbers), and large buffers go straight back to the system
+(`MALLOC_MMAP_THRESHOLD_`). A 4K clip peaks at 1.4-1.6 GB instead of 3.0 and
+drops back to 200 MB afterwards; in a 2-CPU, 2 GB container it took 59 s and
+read the same 47.0 mph as on a desktop.
+
 ## Filming so the numbers are good
 
 These are ordered by how much they actually decide whether a clip can be read
@@ -387,8 +418,9 @@ outline pinned down the camera.
 src/shottracker/    the tracker: config, geometry, camera, detection, tracking, speed, reporting
   synth.py          renders clips with exact ground truth (a pinhole camera and a ballistic puck)
   benchmark.py      grades the tracker against them
-server/app.py       upload a clip, poll a job, fetch the result
+server/app.py       upload a clip, poll a job, fetch the result; the password and clip deletion when online
 web/                the browser app: canvas overlay on the original video, interactive shot chart
+Dockerfile, fly.toml, deploy/   the app on a server for the phone (see PUT IT ON YOUR PHONE.txt)
   annotate.py       the same overlay burned into a copy of the clip, to save and share
   stabilize.py      optional motion compensation (off by default, see below)
   targets.py        scoring shots against what the player was aiming at
@@ -396,7 +428,7 @@ web/                the browser app: canvas overlay on the original video, inter
   session.py        several clips of one goal read as one session
   history.py        sessions over time: one line per session, and progress against earlier ones
   fullspeed.py      reads a slow-motion shot as the phone would have recorded it at 30/60 fps
-tests/              207 tests, including end-to-end accuracy against ground truth
+tests/              214 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about five minutes — most of it

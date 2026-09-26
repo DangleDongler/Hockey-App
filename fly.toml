@@ -1,0 +1,39 @@
+# Fly.io settings for Shot Tracker on the internet (see "PUT IT ON YOUR
+# PHONE.txt").  deploy/fly-setup.sh fills in the app's name and region.
+app = "CHANGE-ME"
+primary_region = "CHANGE-ME"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Clips are deleted this many hours after they are analysed, and all of
+  # them whenever the server goes to sleep.  Speeds, marks and history stay.
+  SHOTTRACKER_KEEP_CLIPS_HOURS = "2"
+  SHOTTRACKER_MAX_UPLOAD_MB = "2000"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Asleep when nobody is using it, so it costs only while it runs; it wakes
+  # in a few seconds when the phone opens it.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  grace_period = "30s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[vm]]
+  # A 4K clip needs about 1.6 GB at its peak; 4 GB leaves room.
+  cpu_kind = "shared"
+  cpus = 4
+  memory = "4gb"
+
+[mounts]
+  source = "shot_data"
+  destination = "/data"

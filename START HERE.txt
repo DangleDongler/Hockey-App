@@ -4,6 +4,9 @@ HOCKEY SHOT TRACKER - TRYING IT AT HOME
 The app runs on a computer (Mac or Windows). You use it from a web page,
 on the computer or on your phone, as long as both are on the same Wi-Fi.
 
+To use it from your phone anywhere, without the computer, see
+"PUT IT ON YOUR PHONE.txt" instead.
+
 
 1. INSTALL PYTHON (ONCE)
 ------------------------

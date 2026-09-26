@@ -55,9 +55,19 @@ def build_background_and_noise(frames: list[np.ndarray]) -> tuple[np.ndarray, np
     if not frames:
         raise ValueError("no frames to build a background from")
     grays = np.stack([f if f.ndim == 2 else cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames])
-    plate = np.median(grays, axis=0)
-    spread = 1.4826 * np.median(np.abs(grays.astype(np.float32) - plate), axis=0)
-    return plate.astype(np.uint8), spread.astype(np.float32)
+    plate = np.empty(grays.shape[1:], dtype=np.uint8)
+    spread = np.empty(grays.shape[1:], dtype=np.float32)
+    # A band of rows at a time: the same numbers, without float copies of
+    # every frame at once (they were most of the memory a 4K clip needed).
+    for r0 in range(0, grays.shape[1], BACKGROUND_BAND_ROWS):
+        band = grays[:, r0:r0 + BACKGROUND_BAND_ROWS]
+        med = np.median(band, axis=0)
+        plate[r0:r0 + BACKGROUND_BAND_ROWS] = med.astype(np.uint8)
+        spread[r0:r0 + BACKGROUND_BAND_ROWS] = 1.4826 * np.median(np.abs(band.astype(np.float32) - med), axis=0)
+    return plate, spread
+
+
+BACKGROUND_BAND_ROWS = 128
 
 
 class PuckDetector:

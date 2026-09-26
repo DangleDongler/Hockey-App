@@ -49,10 +49,14 @@ main { max-width: 1180px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .fields > label, .advanced label { display: block; }
 .fields span, .advanced span { display: block; font-size: .9rem; margin-bottom: .35rem; }
 .fields em, .advanced em { color: var(--muted); font-style: normal; }
-input[type=number] {
+input[type=number], input[type=password] {
   width: 100%; padding: .6rem .7rem; border-radius: 8px; font-size: 1rem;
   background: var(--bg); border: 1px solid var(--line); color: var(--ink);
 }
+.login { max-width: 420px; margin: 0 auto; }
+.login span { display: block; font-size: .9rem; margin-bottom: .35rem; }
+.login button { margin-top: 1rem; }
+.login small { margin-top: .9rem; }
 small { display: block; color: var(--muted); font-size: .78rem; margin-top: .3rem; }
 .advanced { grid-column: 1 / -1; }
 .advanced summary { cursor: pointer; color: var(--muted); font-size: .9rem; margin-bottom: .75rem; }

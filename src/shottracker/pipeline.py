@@ -548,6 +548,7 @@ def analyze(
         net_samples = samples[:: max(1, len(samples) // max(cfg.net.sample_frames, 1))][: cfg.net.sample_frames]
         net_notes: list[str] = []
         net = detect_net(net_samples, cfg, net_notes)
+        net_samples = None
         warnings.extend(net_notes)
 
     if net is None:
@@ -653,6 +654,9 @@ def analyze(
     # were decoded.
     grey = cfg.puck.grey_decode and cfg.puck.method == "median" and not motion.needed
     if not motion.needed:
+        # The net is found, and the plate is read afresh: let the full-size
+        # samples go first (48 of them are 1.2 GB at 4K).
+        samples = None
         small_samples = sample_frames(path, n_plate, info.frame_count, exact=cfg.puck.stabilize,
                                       size=work_size, gray=grey, fast=True)
     else:
@@ -662,6 +666,7 @@ def analyze(
             small_samples.append(
                 cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else img
             )
+        samples = None
     background, noise = (build_background_and_noise(small_samples) if cfg.puck.method == "median"
                          else (None, None))
 

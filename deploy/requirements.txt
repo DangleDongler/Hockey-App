@@ -1,0 +1,11 @@
+# The exact versions the app was tested with, so the server reads clips the
+# same way the tests do.  (requirements.txt at the top allows newer ones.)
+opencv-python-headless==5.0.0.93
+numpy==2.4.6
+scipy==1.17.1
+av==18.1.0
+fastapi==0.141.1
+starlette==1.6.0
+pydantic==2.13.5
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32

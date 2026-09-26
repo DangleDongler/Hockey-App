@@ -1,0 +1,112 @@
+PUT SHOT TRACKER ON YOUR PHONE
+==============================
+
+This puts the app on a server on the internet, so your phone can use it
+anywhere without your computer. Same app, same accuracy. It gets its own
+icon on your Home Screen and opens full screen, like any other app.
+
+Setting it up takes about 15 minutes, once, on your Mac.
+
+
+WHAT IT COSTS
+-------------
+The server is at Fly.io, which charges only while it is running. It goes
+to sleep a few minutes after you stop using it and wakes up in a few
+seconds when you open it, so a few sessions a week should come to a few
+dollars a month. Current prices: fly.io/docs/about/pricing. Fly asks for a
+credit card when you sign up.
+
+
+YOUR CLIPS
+----------
+- Nobody gets in without the password.
+- Each clip is deleted from the server 2 hours after it is analysed, and
+  every clip is deleted whenever the server goes to sleep. The speeds,
+  marks and history are kept.
+- A clip you have just uploaded plays from your phone, not the server.
+- "Save video with shots" needs the server's copy, so save it right after
+  the session, while the clip is still there.
+
+
+1. INSTALL FLY'S TOOL (ONCE)
+----------------------------
+Open Terminal (Applications > Utilities > Terminal) and paste this line,
+then press Return:
+
+    curl -L https://fly.io/install.sh | sh
+
+When it finishes, paste this line and press Return:
+
+    echo 'export PATH="$HOME/.fly/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+(If you use Homebrew, "brew install flyctl" does the same.)
+
+
+2. MAKE A FLY ACCOUNT (ONCE)
+----------------------------
+
+    fly auth signup
+
+A web page opens: sign up there. Then, on fly.io, add a credit card under
+Billing. (Already have an account? Use "fly auth login" instead.)
+
+
+3. PUT THE APP ON IT (ONCE)
+---------------------------
+Unzip Hockey-Shot-Tracker.zip. In Terminal, type  cd  and a space, drag the
+Hockey-Shot-Tracker folder onto the Terminal window, and press Return.
+Then:
+
+    bash deploy/fly-setup.sh
+
+It asks for:
+- a name for your app, which becomes the address: NAME.fly.dev
+- the region nearest you (it shows the list)
+- a password: the one you'll type on your phone, 8 characters or more
+
+Then it builds and starts the app, which takes a few minutes the first
+time. At the end it prints your address.
+
+If it stops with an error, copy everything it printed and send it to me.
+
+
+4. ON YOUR PHONE
+----------------
+- Open https://NAME.fly.dev in Safari and type the password.
+- Tap Share, then "Add to Home Screen".
+- From then on, open it from its icon. You stay logged in.
+
+If it has been asleep, the first open takes a few seconds.
+
+
+USING IT
+--------
+Just as before:
+- Tap "Choose clips" and pick your videos from Photos.
+- Fill in the form. For your backyard that's 18.75 ft, lens 0.5x, phone
+  on the ground.
+- Tap Analyze.
+
+Big 4K clips upload slowly over cellular; on Wi-Fi they are quick. 1080p at
+60 fps is plenty (Settings > Camera > Record Video).
+
+
+WHEN I SEND A NEW VERSION
+-------------------------
+Unzip it, go into the new folder in Terminal (the cd step in 3), and run:
+
+    bash deploy/fly-update.sh
+
+Your sessions and your password stay as they were.
+
+
+CHANGING THINGS LATER
+---------------------
+- A new password (every phone has to log in again):
+      fly secrets set SHOTTRACKER_PASSWORD=your-new-password
+- Keep clips for longer or shorter: change SHOTTRACKER_KEEP_CLIPS_HOURS in
+  fly.toml, then run bash deploy/fly-update.sh.
+- Take it down for good (deletes everything on the server):
+      fly apps destroy NAME
+
+The home version ("Start Hockey App") still works exactly as before.

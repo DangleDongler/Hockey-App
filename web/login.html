@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shot Tracker</title>
+<meta name="theme-color" content="#0b1220">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Shot Tracker">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Shot Tracker</h1>
+  <p class="tagline">Film yourself shooting. Find out how hard and how accurate.</p>
+</header>
+<main>
+  <section class="card login">
+    <form method="post" action="/login">
+      <label>
+        <span>Password</span>
+        <input type="password" name="password" autocomplete="current-password" autofocus required>
+      </label>
+      <p class="error hidden" id="wrong" role="alert">That's not the password. Try again.</p>
+      <button type="submit">Log in</button>
+    </form>
+    <small>Asked once on each phone: it stays logged in after that.</small>
+  </section>
+</main>
+<script>
+  if (new URLSearchParams(location.search).has("wrong")) document.getElementById("wrong").classList.remove("hidden");
+</script>
+</body>
+</html>
