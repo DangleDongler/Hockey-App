@@ -16,7 +16,15 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .camera import PLANAR_FIT_TOL, CameraModel, calibrate_from_homography, hidden_feet, outline_height_fit
+from .camera import (
+    GROUND_FIT_TOL,
+    PLANAR_FIT_TOL,
+    CameraModel,
+    calibrate_from_homography,
+    ground_pose,
+    hidden_feet,
+    outline_height_fit,
+)
 from .config import PUCK_DIAMETER_IN, CameraConfig, Config
 from .container import Lens, detect_slow_motion, read_lens, read_timing
 from .geometry import GoalPlane, build_zones, mouth_outline, outer_outline, outer_rect
@@ -218,6 +226,42 @@ def _busy_scene_warning(
     else:
         how = f"The camera moved during the clip, by {drift[0]:.0f} px or more"
     return head + how + "; prop the phone against something steady rather than holding it."
+
+
+def _held_camera(quad: np.ndarray, K: np.ndarray, cfg: Config,
+                 warnings: list[str]) -> tuple[CameraModel, np.ndarray, str | None] | None:
+    """The camera fitted at the height the player gave, when the outline alone cannot place it.
+
+    Returns the camera, the outline with the posts' hidden feet put back, and
+    a note on them -- or None, saying why, when the outline does not fit a
+    goal of the size given seen from that height.
+    """
+    g, height = cfg.goal, float(cfg.camera.height_in)
+    fit = ground_pose(quad, K, g, height)
+    q = np.asarray(quad, dtype=np.float64)
+    width_px = 0.5 * (np.linalg.norm(q[1] - q[0]) + np.linalg.norm(q[2] - q[3]))
+    if fit is None or fit[3] > GROUND_FIT_TOL * width_px:
+        warnings.append(
+            f"the net's outline does not fit a {g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in goal seen from "
+            f"{height:.0f} in off the ground, so where the phone was is worked out from the outline alone. If the "
+            "phone was raised, say so in the form; if not, check the net's size"
+        )
+        return None
+    R, t, hidden, rms = fit
+    hw, top = g.outer_width_in / 2.0, g.outer_height_in
+    corners = np.array([[-hw, top, 0.0], [hw, top, 0.0], [hw, 0.0, 0.0], [-hw, 0.0, 0.0]])
+    cam_pts = (R @ corners.T).T + t
+    full = (K @ (cam_pts / cam_pts[:, 2:3]).T).T[:, :2]
+    note = None
+    if hidden >= 1.5:
+        note = (f"the bottom {hidden:.0f} in of the posts look hidden -- grass, seen from low down -- so the goal's "
+                f"feet were put where a {g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in goal's must be")
+    warnings.append(
+        f"the net is too small in the picture to show how high the phone was, so it was taken as {height:.0f} in "
+        "off the ground, as entered"
+    )
+    cam = CameraModel(K=K, R=R, t=t, focal_px=float(K[0, 0]), residual_px=rms, focal_source="known")
+    return cam, full, note
 
 
 def _goal_size_note(quad: np.ndarray, K: np.ndarray, cfg: Config) -> str | None:
@@ -512,13 +556,16 @@ def analyze(
     warnings.extend(net.notes)
 
     known = known_focal_px(info, cfg)
+    K = (np.array([[known[0], 0.0, info.width / 2.0], [0.0, known[0], info.height / 2.0], [0.0, 0.0, 1.0]])
+         if known else None)
+    seen_quad = np.array(net.quad, dtype=np.float64)
+    feet_note = None
     if known and cfg.net.restore_hidden_feet:
-        K = np.array([[known[0], 0.0, info.width / 2.0], [0.0, known[0], info.height / 2.0], [0.0, 0.0, 1.0]])
         restored = hidden_feet(net.quad, K, cfg.goal)
         if restored is not None:
             net.quad, hidden = restored
             g = cfg.goal
-            warnings.append(
+            feet_note = (
                 f"the bottom {hidden:.0f} in of the posts look hidden -- grass, seen from low down -- so the goal's "
                 f"feet were put where a {g.mouth_width_in:.0f} x {g.mouth_height_in:.0f} in goal's must be. If the "
                 f"opening really is about {g.mouth_width_in:.0f} x {g.mouth_height_in - hidden:.0f} in, enter that"
@@ -534,6 +581,26 @@ def analyze(
         known_focal_px=known[0] if known else None,
         known_focal_spread=known[1] if known else 0.0,
     )
+    if cfg.camera.height_in is not None:
+        if not known:
+            warnings.append("the phone's height is only used with the lens known; pick the lens you filmed with")
+        elif cam is not None and cam.pose_from_corners:
+            # The outline settled where the phone was on its own; a height
+            # misremembered must not override it (from 56 in up, entered as
+            # on the ground, a synthetic view read speeds 26-69% fast).
+            if abs(float(cam.position[1]) - cfg.camera.height_in) > 24.0:
+                warnings.append(
+                    f"the net's outline puts the phone about {cam.position[1]:.0f} in off the ground, not the "
+                    f"{cfg.camera.height_in:.0f} in entered; the outline was clear enough to go by"
+                )
+        else:
+            held = _held_camera(seen_quad, K, cfg, warnings)
+            if held is not None:
+                cam, quad, feet_note = held
+                net.quad = quad
+                plane = GoalPlane(net.quad, cfg.goal)
+    if feet_note:
+        warnings.append(feet_note)
     if cam is not None and known:
         warnings.append(f"lens: {known[2]}")
         note = _goal_size_note(plane.image_quad, cam.K, cfg)

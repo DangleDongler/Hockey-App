@@ -39,7 +39,7 @@ function describeFiles(files) {
 // The form remembers what was last used -- the same backyard, net and
 // shooting spot, session after session.  Browser storage can be missing or
 // refuse (private browsing), so every access is guarded.
-const REMEMBERED = ["distance", "offset", "lens", "target", "target-radius", "goal-w", "goal-h"];
+const REMEMBERED = ["distance", "offset", "lens", "phone", "target", "target-radius", "goal-w", "goal-h"];
 const SETTINGS_KEY = "shottracker.form";
 
 function restoreForm() {
@@ -102,6 +102,7 @@ $("upload-form").addEventListener("submit", async (e) => {
   body.append("shooter_offset_ft", num("offset") ?? 0);
   if (num("hfov") !== null) body.append("hfov_deg", num("hfov"));
   if ($("lens").value) body.append("lens", $("lens").value);
+  if ($("phone").value) body.append("phone", $("phone").value);
   rememberForm();
   if (num("fps") !== null) body.append("fps_override", num("fps"));
   if ($("target").value) body.append("target", $("target").value);

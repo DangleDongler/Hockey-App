@@ -61,6 +61,9 @@ class CameraModel:
     # Where the focal length came from: "goal" (solved from the outline),
     # "known" (the phone's own record, or the player's), or "assumed".
     focal_source: str = "goal"
+    # True when the pose was fitted to the goal's corners and passed every
+    # check that it is well settled by them (see _planar_pose).
+    pose_from_corners: bool = False
 
     @property
     def position(self) -> np.ndarray:
@@ -290,6 +293,90 @@ def hidden_feet(corners_image, K: np.ndarray, goal, max_hidden_in: float = 15.0,
     return np.array([ci[0], ci[1], img[0], img[1]]), float(hidden)
 
 
+# A phone "on the ground" -- propped up in portrait, its lens a few inches
+# above the grass or gravel -- is held at this height (see ground_pose).  On
+# the real clips anything from -6 to +12 in moved the speeds by 1-2%.
+ON_GROUND_HEIGHT_IN = 4.0
+# The held fit is kept only while the outline fits a goal of the size given,
+# seen from that height, to this fraction of the goal's width in the picture.
+# The real slow-motion clips it was made for fitted to 1.8%.
+GROUND_FIT_TOL = 0.03
+
+
+def _look_at(centre: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """World-to-camera rotation for a camera at ``centre`` looking at ``target``, held level."""
+    z = target - centre
+    z = z / np.linalg.norm(z)
+    x = np.cross(np.array([0.0, -1.0, 0.0]), z)
+    x = x / np.linalg.norm(x)
+    return np.stack([x, np.cross(z, x), z])
+
+
+def ground_pose(corners_image, K: np.ndarray, goal, height_in: float,
+                max_hidden_in: float = 15.0) -> tuple[np.ndarray, np.ndarray, float, float] | None:
+    """The pose of a camera at a known height, and how much of the posts the ground hides.
+
+    From a phone on the ground, a goal 25 ft away is a fifth of the frame
+    wide, and its outline cannot say how high the phone is: on two real
+    slow-motion clips an outline 2-4 px out put it 14 and 48 in up instead
+    of on the gravel, the puck 10-32 in in the air as it left the stick, and
+    read the shots 6% and 20% fast.  Holding the height where the player
+    says it was leaves the outline to settle the rest -- which way the phone
+    faced, how far out and to the side it was, how much grass hides the
+    feet -- and on those clips landed within 2.5% of the speeds the
+    background itself gave (the camera placed by matching the house and
+    fence to a 4K clip from the same spot).
+
+    The fit starts from a fan of placements around the goal, so it does not
+    settle on the first answer near a poor guess.  Returns (R, t, hidden
+    inches, RMS miss in px) or None.
+    """
+    from scipy.optimize import least_squares
+
+    ci = np.asarray(corners_image, dtype=np.float64).reshape(-1, 2)
+    if ci.shape != (4, 2):
+        return None
+    width_px = 0.5 * (np.linalg.norm(ci[1] - ci[0]) + np.linalg.norm(ci[2] - ci[3]))
+    if width_px <= 0:
+        return None
+    hw, top = goal.outer_width_in / 2.0, goal.outer_height_in
+
+    def rect(hidden: float) -> np.ndarray:
+        return np.array([[-hw, top, 0.0], [hw, top, 0.0], [hw, hidden, 0.0], [-hw, hidden, 0.0]])
+
+    def pose(p) -> tuple[np.ndarray, np.ndarray]:
+        R = cv2.Rodrigues(np.asarray(p[:3], dtype=np.float64))[0]
+        return R, -R @ np.array([p[3], height_in, p[4]])
+
+    def miss(p) -> np.ndarray:
+        R, t = pose(p)
+        cam = (R @ rect(p[5]).T).T + t
+        if np.any(cam[:, 2] <= 1.0):
+            return np.full(8, 1e3)
+        return ((K @ (cam / cam[:, 2:3]).T).T[:, :2] - ci).ravel()
+
+    reach = float(K[0, 0]) * goal.outer_width_in / width_px   # how far a goal this wide is, head on
+    aim = np.array([0.0, top / 2.0, 0.0])
+    lower = [-np.inf] * 3 + [-10.0 * reach, 24.0, 0.0]
+    upper = [np.inf] * 3 + [10.0 * reach, 10.0 * reach, max_hidden_in]
+    best = None
+    for az in np.radians(np.arange(-70.0, 71.0, 10.0)):
+        for d in (0.8 * reach, reach, 1.25 * reach):
+            c = np.array([d * np.sin(az), height_in, d * np.cos(az)])
+            x0 = np.r_[cv2.Rodrigues(_look_at(c, aim))[0].ravel(), c[0], c[2], 5.0]
+            try:
+                sol = least_squares(miss, x0, bounds=(lower, upper))
+            except ValueError:
+                continue
+            if best is None or sol.cost < best.cost:
+                best = sol
+    if best is None or best.cost >= 0.5 * 8 * 1e6:
+        return None
+    R, t = pose(best.x)
+    rms = float(np.sqrt(np.mean(np.sum(best.fun.reshape(-1, 2) ** 2, axis=1))))
+    return R, t, float(best.x[5]), rms
+
+
 def outline_height_fit(corners_image, K: np.ndarray, goal) -> tuple[float, float, float] | None:
     """How well the outline fits the goal as entered, and which mouth height fits it best.
 
@@ -409,10 +496,11 @@ def calibrate_from_homography(
     # from this same outline, the homography's pose is the one consistent with
     # that solve: fitting afresh on top of it made the benchmark's speeds
     # worse (1.1-1.9% to 2.0-3.4%).
+    settled = False
     if source == "known" and corners_goal is not None and corners_image is not None:
         better = _planar_pose(corners_goal, corners_image, K)
         if better is not None:
-            R, t = better
+            (R, t), settled = better, True
 
     residual = 0.0
     if corners_goal is not None and corners_image is not None:
@@ -425,4 +513,5 @@ def calibrate_from_homography(
     return CameraModel(
         K=K, R=R, t=t, focal_px=f, residual_px=residual,
         focal_assumed=focal_assumed, focal_spread=focal_spread, focal_source=source,
+        pose_from_corners=settled,
     )

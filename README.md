@@ -396,7 +396,7 @@ web/                the browser app: canvas overlay on the original video, inter
   session.py        several clips of one goal read as one session
   history.py        sessions over time: one line per session, and progress against earlier ones
   fullspeed.py      reads a slow-motion shot as the phone would have recorded it at 30/60 fps
-tests/              202 tests, including end-to-end accuracy against ground truth
+tests/              207 tests, including end-to-end accuracy against ground truth
 ```
 
 Run the tests with `.venv/bin/python -m pytest` (about five minutes — most of it
@@ -416,22 +416,26 @@ normal-speed test cases, judged against its own slow-motion reading:
 ```
 
 On four real slow-motion shots (backyard, phone lying on the ground about
-26 ft out and to the side, 0.5x lens), read at 240 fps and at every 60 and
-30 fps version of each:
+26 ft out and to the side, 0.5x lens, entered as on the ground), read at
+240 fps and at every 60 and 30 fps version of each:
 
 | | Speed vs the slow-motion reading | Mark vs the slow-motion reading |
 | --- | --- | --- |
-| 60 fps, shot 1 (just wide) | −6% to −3% | within 2.8 in |
-| 60 fps, shot 2 (into the net) | −8% to +1% | within 2.1 in |
-| 60 fps, shot 3 (over the bar) | −1% to +11% | within 2.3 in |
-| 60 fps, shot 4 (off the crossbar) | +2% to +14% | 2.8–4.1 in |
-| 30 fps, all four | −25% to +25% | median 3 in, up to 52 in; 1 of 32 versions read nothing |
+| 60 fps, shot 1 (just wide) | −7% to −4% | within 2.8 in |
+| 60 fps, shot 2 (into the net) | −3% to +1% | within 2.2 in |
+| 60 fps, shot 3 (over the bar) | −6% to +6% | within 2.3 in |
+| 60 fps, shot 4 (off the crossbar) | 0% to +7% | 2.3–3.9 in |
+| 30 fps, all four | −47% to +17% | median 3 in, up to 50 in; 1 of 32 versions read nothing |
 
 (Each against its own slow-motion reading with the same settings. Across all
-sixteen 60 fps versions: speed within 4.0% at the median and 13.6% at worst,
-marks within 2.4 in at the median and 4.1 in at worst. The slow-motion
-readings are themselves only as good as their outline: the first one reads
-41.6 mph against 39 timed by hand, while its 60 fps versions read 39-40.)
+sixteen 60 fps versions: speed within 3.3% at the median and 7.3% at worst,
+marks within 2.2 in at the median and 3.9 in at worst -- 4.0% and 13.6%
+before the phone's height was held, see *A fourth pass*. At 30 fps the
+tracks are a few sightings long and which one wins turns on small things;
+with the posts' hidden feet put back, three copies of the third shot read
+38-47% slow. 30 fps is still not to be trusted. The slow-motion readings
+are themselves only as good as their outline: the first one reads 42.3 mph
+against 39 timed by hand, while its 60 fps versions read 39-40.)
 
 The copies are written losslessly: an earlier table here came from re-encoded
 copies, and the re-encoding alone blurred the small net's pipes and some
@@ -439,7 +443,8 @@ pucks enough to change the result.
 
 What is left at 60 fps comes from the camera spot, not the frame rate. The
 two shots filmed from the ground 26 ft out on the far side read within a few
-inches but swing by up to 14% on speed between copies: one or two pixels of
+inches but swung by up to 14% on speed between copies (7% with the phone's
+height held): one or two pixels of
 difference in where the net is outlined moves the worked-out camera by feet
 at that distance. A puck that misses wide also carries on into the backstop,
 and from far out and low that looks almost exactly like a puck still short
@@ -492,6 +497,11 @@ the worked-out camera by feet, and the speed with it. Most of what looked like
 that error on the real clips turned out to be the lawn hiding the bottom of
 the posts, which the app now allows for (see *A third pass* below), but a
 higher, closer phone is still better, in order:
+
+If the phone is on the ground, say so in the form ("Where was the phone?"):
+from there the net is too small to show how high the phone was, and on two
+real slow-motion clips saying so took the speeds from 6% and 20% fast to
+within 2.5% (see *A fourth pass*).
 
 1. **Record at 60 fps** (normal video, not slow motion). Normal iPhone video
    records which lens filmed it; the app reads that and no longer has to guess
@@ -697,9 +707,53 @@ are found by their long upright runs of colour, which shaves a post leaning
 with it; taking each row's full run of colour fixed the lean but picked up
 clutter touching the posts, and on the newer slow-motion clips the outline
 then changed so much from sample to sample that their 60 fps copies read
-54-82% fast. Those two clips also fit a view of about 66 deg best rather than
-the 0.5x lens's 74, as if slow motion cropped the sensor; until that is known
-they are left as they were.
+54-82% fast. (Those two clips also fitted a view of about 66 deg best rather
+than the 0.5x lens's 74, as if slow motion cropped the sensor. It does not:
+see *A fourth pass*.)
+
+### A fourth pass: slow motion from the ground, and how high the phone was
+
+The two newer slow-motion clips (0.5x lens, 18 ft 9 in, phone on the gravel
+beside the slab, as the player confirmed) read 58.6 and 62.0 mph with the
+lens picked. Nothing checked them, so they were checked three ways:
+
+- **Slow motion does not crop.** Matching the house and fence between these
+  clips and a 4K 60 fps clip from the same spot -- which records its lens --
+  gives the same scale, 1.00 and 0.97. The 0.5x lens is 14 mm equivalent in
+  slow motion too.
+- **Where the phone was, from the background alone.** 3,779 of 4,182 points
+  on the house and fence agree on how the phone moved between that 60 fps
+  clip, whose outline fits to 0.7 px at 4K, and these: 18 in, turned 7 deg.
+  That puts it 4 in off the ground, 9 ft to the side and 25 1/2 ft out. With
+  the camera there, the shots read **55.4 and 51.8 mph**, both pucks leave
+  the stick 19.6 and 18.9 ft out (the player said 18.75), and the timing
+  agrees with the frames: released at frames 104 and 118, over or onto the
+  bar, into the backstop behind at 164 and about 181.
+- **What the outline alone said.** At 1080p the net is 200 px wide, and the
+  near post, leaning in the picture as the phone looks up at it, was
+  followed 2-5 px short at its top and bottom. From that the app put the
+  phone 48 and 14 in up (it was on the gravel), the puck 32 and 10 in in the
+  air as it left the blade, and the shots 6% and 20% fast. Even a perfect
+  outline with half a pixel of noise moves the worked-out phone by up to
+  2 1/2 ft from there: a net that small, seen from the ground, cannot show how
+  high the phone is.
+
+So the form now asks **where the phone was**. "On the ground" holds its lens
+4 in up and fits the rest -- which way it faced, how far out and to the side,
+how much grass hides the feet -- to the outline (`camera.ground_pose`, from a
+fan of starting guesses around the goal). The two clips then read **54.9 and
+50.5 mph**, 1% and 2.5% under the background's answer, and the release is
+where the player said. Anything from -6 to +12 in moves them 1-2%.
+
+It is used only when the outline cannot settle the camera itself. Where it
+can, the outline wins and the notes say where it put the phone: a synthetic
+phone 56 in up straight behind the shooter, entered as on the ground and
+held there anyway, read speeds 26-69% fast, and the same phone 58 in up at
+an angle came through unchanged. That is also why "Not sure" is the
+default. On the other real clips it changes little: the 60 fps clips' own
+outlines settle the camera (47.0 and 50.4 mph, timed at 47 and 50), and the
+first two slow-motion clips move from 41.6 and 40.0 to 42.3 and 40.4 mph
+(the first timed by hand at 39, 225 in over 79 frames).
 
 ### The first real clip
 

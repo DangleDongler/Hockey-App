@@ -174,3 +174,56 @@ def test_feet_hidden_in_grass_are_put_back():
     assert hidden == pytest.approx(7.0, abs=0.5)
     assert np.abs(quad - true).max() < 1.0
     assert hidden_feet(true, K, goal) is None
+
+
+def _on_the_gravel():
+    """A 0.5x phone in portrait on the ground 25 ft out and 9 ft to the side,
+    the net 180 px wide with 8 in of its posts in the grass: the real
+    slow-motion clips' view."""
+    from shottracker.camera import _look_at
+
+    spec = GoalSpec()
+    W, H, f = 1080, 1920, 712.75
+    K = np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1.0]])
+    centre = np.array([110.0, 4.0, 307.0])
+    R = _look_at(centre, np.array([-150.0, 70.0, 0.0]))
+    t = -R @ centre
+    hw, top = spec.outer_width_in / 2, spec.outer_height_in
+    pts = (R @ np.array([[-hw, top, 0], [hw, top, 0], [hw, 8.0, 0], [-hw, 8.0, 0]]).T).T + t
+    seen = (K @ (pts / pts[:, 2:3]).T).T[:, :2]
+    # The near post leans in the picture and the outline follows it a
+    # couple of pixels short, as on the real clips.
+    misread = seen + np.array([[0, 0], [2.5, 0], [-2.5, 0], [0, 0]])
+    return spec, K, centre, misread
+
+
+def test_a_phone_on_the_ground_is_held_there_when_the_net_is_small():
+    from shottracker.camera import ground_pose, hidden_feet
+
+    spec, K, centre, quad = _on_the_gravel()
+    restored = hidden_feet(quad, K, spec)
+    q = restored[0] if restored is not None else quad
+    plane = GoalPlane(q, spec)
+    free = calibrate_from_homography(plane.H, (1080, 1920), outer_rect(spec), plane.image_quad,
+                                     known_focal_px=K[0, 0], known_focal_spread=0.06)
+    # The outline alone cannot place it: the phone ends up four feet in the air.
+    assert not free.pose_from_corners
+    assert free.position[1] > 30.0
+
+    R, t, hidden, rms = ground_pose(quad, K, spec, 4.0)
+    assert np.linalg.norm(-R.T @ t - centre) < 36.0
+    assert hidden == pytest.approx(8.0, abs=2.0)
+    # How high exactly hardly matters.
+    for h in (-2.0, 10.0):
+        R, t, _, _ = ground_pose(quad, K, spec, h)
+        assert np.linalg.norm((-R.T @ t - centre)[[0, 2]]) < 36.0
+
+
+def test_held_at_the_true_height_the_outline_gives_the_pose_back():
+    from shottracker.camera import ground_pose
+
+    spec, K, centre, quad = _on_the_gravel()
+    exact = quad - np.array([[0, 0], [2.5, 0], [-2.5, 0], [0, 0]])
+    R, t, hidden, rms = ground_pose(exact, K, spec, 4.0)
+    assert np.allclose(-R.T @ t, centre, atol=0.5)
+    assert hidden == pytest.approx(8.0, abs=0.1) and rms < 0.05

@@ -24,6 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from shottracker.camera import ON_GROUND_HEIGHT_IN
 from shottracker.config import CameraConfig, Config
 from shottracker.history import progress, rescore, session_record
 from shottracker.net_detect import detect_net_in_frame
@@ -107,6 +108,7 @@ def _settings(cfg: Config) -> dict[str, Any]:
         "assumed_focal_frac": cfg.camera.assumed_focal_frac,
         "hfov_deg": cfg.camera.hfov_deg,
         "focal_35mm": cfg.camera.focal_35mm,
+        "camera_height_in": cfg.camera.height_in,
         "fps_override": cfg.fps_override,
         "goal": {"mouth_width_in": cfg.goal.mouth_width_in, "mouth_height_in": cfg.goal.mouth_height_in},
         "target": {"kind": cfg.target.kind, "radius_in": cfg.target.radius_in,
@@ -121,6 +123,7 @@ def _config_from(settings: dict[str, Any]) -> Config:
     cfg.camera.assumed_focal_frac = settings.get("assumed_focal_frac") or cfg.camera.assumed_focal_frac
     cfg.camera.hfov_deg = settings.get("hfov_deg")
     cfg.camera.focal_35mm = settings.get("focal_35mm")
+    cfg.camera.height_in = settings.get("camera_height_in")
     cfg.fps_override = settings.get("fps_override")
     goal = settings.get("goal") or {}
     cfg.goal.mouth_width_in = goal.get("mouth_width_in") or cfg.goal.mouth_width_in
@@ -222,6 +225,8 @@ def _run_job(job_id: str, cfg: Config, only: int | None = None) -> None:
 
 
 MAX_CLIPS = int(os.environ.get("SHOTTRACKER_MAX_CLIPS", "30"))
+# Where the player says the phone was: its lens's height, when that helps.
+PHONE_PLACES = {"ground": ON_GROUND_HEIGHT_IN, "raised": None}
 
 
 async def _save_upload(upload: UploadFile, dest: Path, budget: int) -> int:
@@ -245,6 +250,7 @@ async def create_job(
     shooter_offset_ft: float = Form(0.0),
     hfov_deg: float | None = Form(None),
     lens: str | None = Form(None),
+    phone: str | None = Form(None),
     fps_override: float | None = Form(None),
     goal_width_in: float | None = Form(None),
     goal_height_in: float | None = Form(None),
@@ -264,6 +270,8 @@ async def create_job(
 
     if lens and lens not in CameraConfig.LENS_CHOICES:
         raise HTTPException(400, f"unknown lens {lens!r}; use one of {sorted(CameraConfig.LENS_CHOICES)}")
+    if phone and phone not in PHONE_PLACES:
+        raise HTTPException(400, f"unknown phone placement {phone!r}; use one of {sorted(PHONE_PLACES)}")
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = DATA_DIR / job_id
@@ -290,6 +298,8 @@ async def create_job(
         cfg.camera.hfov_deg = hfov_deg
     if lens:
         cfg.camera.focal_35mm = CameraConfig.LENS_CHOICES[lens]
+    if phone:
+        cfg.camera.height_in = PHONE_PLACES[phone]
     if fps_override:
         cfg.fps_override = fps_override
     if goal_width_in:

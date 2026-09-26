@@ -126,6 +126,24 @@ def test_the_lens_chosen_is_kept_with_the_session(client, angled_clip):
         client.delete(f"/api/jobs/{job_id}")
 
 
+def test_where_the_phone_was_is_kept_with_the_session(client, angled_clip):
+    import app as server
+
+    from shottracker.camera import ON_GROUND_HEIGHT_IN
+
+    job_id, job = _upload(client, angled_clip["path"], lens="0.5x", phone="ground")
+    try:
+        assert job["status"] == "done", job.get("error")
+        cfg = server._config_from(server._settings(server.JOBS[job_id].cfg))
+        assert cfg.camera.height_in == ON_GROUND_HEIGHT_IN
+    finally:
+        client.delete(f"/api/jobs/{job_id}")
+    with open(angled_clip["path"], "rb") as fh:
+        res = client.post("/api/analyze", files=[("videos", ("a.mp4", fh, "video/mp4"))],
+                          data={"shot_distance_ft": "20", "phone": "roof"})
+    assert res.status_code == 400 and "phone" in res.json()["detail"]
+
+
 def test_a_video_with_the_shots_drawn_on_can_be_saved(client, angled_clip):
     job_id, job = _upload(client, angled_clip["path"])
     try:

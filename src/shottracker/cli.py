@@ -37,6 +37,10 @@ def _build_config(args) -> Config:
         cfg.camera.hfov_deg = args.hfov
     if getattr(args, "lens", None):
         cfg.camera.focal_35mm = CameraConfig.LENS_CHOICES[args.lens]
+    if getattr(args, "on_ground", False):
+        from .camera import ON_GROUND_HEIGHT_IN
+
+        cfg.camera.height_in = ON_GROUND_HEIGHT_IN
     if getattr(args, "target", None):
         cfg.target.kind = args.target
     if getattr(args, "target_at", None):
@@ -187,6 +191,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--lens", choices=sorted(CameraConfig.LENS_CHOICES),
                    help="the iPhone lens it was filmed with. Only used when the file does not say: "
                         "slow motion never does.")
+    a.add_argument("--on-ground", action="store_true",
+                   help="the phone was on the ground. From there a far net is too small to show how "
+                        "high the phone was; with the lens known, this says. Ignored when the net "
+                        "shows it clearly itself.")
     a.add_argument("--hfov", type=float, metavar="DEG",
                    help="the horizontal field of view of the video as filmed, in degrees. Normal "
                         "iPhone video records its lens in the file, so this is only needed for slow "

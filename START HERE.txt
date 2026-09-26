@@ -60,8 +60,11 @@ These matter more than anything else for accuracy:
 - Or from the computer: AirDrop or copy the videos over and drag them onto
   the page.
 - Fill in the shooting distance, the lens you filmed with (0.5x or 1x),
+  where the phone was (on the ground, or raised on a chair or tripod),
   the net's opening in inches, and what you were aiming at. The page
-  remembers these for next time.
+  remembers these for next time. If the phone was on the ground, say so:
+  from there a far net is too small to show how high the phone was, and
+  on the slow-motion clips that fixed speeds that read up to 20% fast.
 - If the notes say the bottom few inches of the posts looked hidden (grass,
   seen from low down), that's normal from the ground; the app allows for
   it. If they say the outline fits a different size of net, check the size
@@ -83,11 +86,14 @@ Downloads (Files app); from there Share > Save Video puts it in Photos.
 5. HOW MUCH TO TRUST IT
 -----------------------
 Measured on real backyard clips so far:
-- 60 fps: most shots within about 4% on speed and 2-3 inches on the mark;
-  now and then one is off by up to about 15% on speed. The two shots timed
+- 60 fps: most shots within about 3% on speed and 2-3 inches on the mark;
+  now and then one is off by up to about 7% on speed. The two shots timed
   by hand read 47.0 and 50.4 mph against 47 and 50.
 - Slow motion: the most accurate. Pick the lens in the form, because slow
-  motion doesn't record it.
+  motion doesn't record it, and say the phone was on the ground if it
+  was. The two newest slow-motion shots then read 54.9 and 50.5 mph
+  against 55.4 and 51.8 worked out a second way (from the house and
+  fence in the background).
 - 30 fps: not accurate enough to trust.
 It has only been tested in one backyard with one shooter so far. Clips
 where it gets something wrong are the most useful thing to send back.

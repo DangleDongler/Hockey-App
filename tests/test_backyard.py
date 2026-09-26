@@ -137,3 +137,33 @@ def test_posts_hidden_in_grass_are_put_back(lawn):
     assert feet_fixed < 5.0
     assert np.mean(marks) < 4.0
     assert any("look hidden" in w for w in fixed.warnings)
+
+
+def test_a_phone_said_to_be_on_the_ground_is_held_there(lawn):
+    from shottracker.camera import ON_GROUND_HEIGHT_IN
+
+    cfg = Config()
+    cfg.speed.shot_distance_ft = 18.75
+    cfg.speed.shooter_offset_ft = -20 / 12
+    cfg.camera.hfov_deg = 70.0
+    cfg.camera.height_in = ON_GROUND_HEIGHT_IN
+    r = analyze(lawn["path"], cfg)
+    assert any("too small in the picture to show how high" in w for w in r.warnings)
+    assert r.camera.position[1] == pytest.approx(ON_GROUND_HEIGHT_IN)
+    assert any("look hidden" in w for w in r.warnings)
+    for t in lawn["shots"]:
+        s = next(s for s in r.shots if abs(s.impact_frame - t["impact_frame"]) <= 3)
+        assert s.speed.mph == pytest.approx(t["release_speed_mph"], rel=0.05)
+        assert np.hypot(s.impact_goal_in[0] - t["impact_x_in"], s.impact_goal_in[1] - t["impact_y_in"]) < 5.0
+
+
+def test_a_clear_outline_outweighs_a_height_misremembered(angled_clip):
+    """From 58 in up, a phone entered as on the ground: the net shows where it was."""
+    cfg = Config()
+    cfg.speed.shot_distance_ft = 20.0
+    cfg.camera.hfov_deg = 62.0
+    cfg.camera.height_in = 4.0
+    r = analyze(angled_clip["path"], cfg)
+    assert r.camera.pose_from_corners
+    assert r.camera.position[1] == pytest.approx(58.0, abs=6.0)
+    assert any("not the 4 in entered" in w for w in r.warnings)

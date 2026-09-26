@@ -294,6 +294,11 @@ class CameraConfig:
     # length (see LENS_CHOICES).  Used when the file does not record its own:
     # slow motion never does, and a phone may strip it when uploading.
     focal_35mm: float | None = None
+    # How high the phone's lens was above the ground the goal stands on, when
+    # the player says (camera.ON_GROUND_HEIGHT_IN for "on the ground").  With
+    # the lens known too, the camera is fitted at that height rather than
+    # worked out from the outline alone (see camera.ground_pose).
+    height_in: float | None = None
     use_lens_metadata: bool = True
     # The 35 mm-equivalent focal length a phone records is rounded to a whole
     # millimetre: about 4% at the ultra-wide's 13-14 mm.
